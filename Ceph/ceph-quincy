@@ -1,0 +1,105 @@
+###########Ceph deployment steps##################
+
+##############Update & upgrade the system###########
+apt -y update && apt -y upgrade
+
+###########Edit the /etc/hosts file:##########
+<102.223.185.34>  <seemoosp>
+
+#########Install docker and its dependencies##############
+sudo apt install apt-transport-https ca-certificates curl software-properties-common -y
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt -y update
+sudo apt -y install docker-ce
+sudo systemctl enable --now docker
+
+########Install cephadm########
+apt install cephadm -y
+
+###### Add Ceph Repository######### 
+Add the official Ceph repository for the desired release (e.g., quincy):
+
+cephadm add-repo --release quincy
+
+##########Install Ceph Packages#############
+cephadm install
+
+############Bootstrap the Ceph Cluster##########
+Initialize the Ceph cluster and deploy the first monitor with dashboard access:
+
+cephadm bootstrap \
+  --mon-ip <102.223.185.34> \
+  --initial-dashboard-user Admin \
+  --initial-dashboard-password Admin098! \
+  --dashboard-password-noupdate
+
+
+##########Install Common Ceph Tools############
+cephadm install ceph-common
+
+#############################Set public network for our ceph cluster ############
+sudo ceph config set mon public_network 102.223.185.0/27
+
+##################Deploy monitors on a specific set of hosts ###########
+ceph orch host ls
+sudo ceph orch apply mon "seemoosp"
+
+########### ########## ceph add lable ############
+ sudo ceph orch host label add seemoosp mon
+ 
+######################### create osd from a specific device on a specific host #############
+vi seemoosp_osd.yml
+  service_type: osd
+service_id: seemoosp_osd
+service_name: osd.seemoosp_osd
+placement:
+  host_pattern: "seemoosp"
+spec:
+  data_devices:
+    paths:
+    - /dev/sda
+    - /dev/sdb
+    - /dev/sdc
+  unmanaged: False
+  
+ceph orch apply osd -i seemoosp_osd.yaml
+
+################## DEPLOY RGWS service #####################
+ceph orch host label add seemoosp rgw
+ceph orch apply rgw radosGW '--placement=label:rgw count-per-host:1' --port=8080 
+
+############## rgw user list and info  ####### 
+radosgw-admin user list
+radosgw-admin user info --uid=dashboard
+
+################mgr set up on node##########
+ceph orch apply mgr --placement=" seemoosp "
+ceph balancer on
+
+#############install chrony and s3cmd on node############
+apt install -y chrony && apt install -y s3cmd
+
+#########command to set the osd pool size replica1  #########
+for pool in $(ceph osd pool ls); do
+  ceph osd pool set "$pool" size 2
+done
+
+##########Configure s3cmd########
+vim /root/.s3cfg
+
+[default]
+access_key = <Z85VHLANFNCUI023AGO0>
+secret_key = <xmhFA9EDNbehMNDiSat2PHXvR5MXv6GQtTIeYcwW>
+
+host_base = <http://102.223.185.34:8080>
+host_bucket = <http://102.223.185.34:8080>
+use_https = False
+
+######Verify S3cmd Configuration###########
+Create a New Bucket
+
+s3cmd mb s3://rah010
+s3cmd ls
+
