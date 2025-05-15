@@ -1,0 +1,59 @@
+##########Certbot and HAProxy SSL Certificate Update Procedure##############
+This document outlines the steps to generate an SSL certificate using Certbot and update the HAProxy SSL certificate in the OpenStack environment.
+
+####Prerequisites:########
+    Access to the nginx instance in the bheemaiah project.
+    SSH access to the OpenStack node where HAProxy is deployed.
+    Certbot installed on the nginx instance.
+
+#####Procedure:######
+1. Login to the nginx instance on two different terminals:
+    Open the first terminal and connect to the nginx instance.
+    Open the second terminal and connect to the same nginx instance.
+
+#######Generate SSL Certificate Using Certbot:#######
+   On the first terminal, run the following command:
+   
+certbot certonly --manual --email <babin.bheemaiah@gmail.com> -d <cloud.theworklabscloud.com>       (this will the codes) 
+
+########Create ACME Challenge File:###########
+   On the second terminal, navigate to the ACME challenge directory:
+    
+cd /var/www/html/.well-known/acme-challenge/
+
+###Create the challenge file:####
+
+echo "KgQngjkhLah0B6ldcFc6wJWOwGnI95boX-53bLn5h6I.Js5UQxoUJvUXB92ufyaLxA7w3zlqtqjN81ejj5Gj0VE" > KgQngjkhLah0B6ldcFc6wJWOwGnI95boX-53bLn5h6I
+
+#######Create the HAProxy Certificate File:#########
+Combine the fullchain.pem and privkey.pem files into a single haproxy.pem file:
+
+sudo cat /etc/letsencrypt/live/d1-cloud.dodil.io/fullchain.pem > haproxy.pem
+sudo cat /etc/letsencrypt/live/d1-cloud.dodil.io/privkey.pem >> haproxy.pem
+
+#######Transfer the haproxy.pem File:###########
+Transfer the haproxy.pem file to the local machine or a location with access to the OpenStack node:
+
+scp haproxy.pem user@destination_ip:/path/to/destination
+
+#######Backup Existing HAProxy Certificate:#######
+On the OpenStack node, take a backup of the existing HAProxy certificate:
+
+cp /etc/kolla/haproxy/haproxy.pem /etc/kolla/haproxy/haproxy.pem_old
+chmod 600 /etc/kolla/haproxy/haproxy.pem_old
+
+######Update the HAProxy Certificate:########
+Copy the new haproxy.pem file to the HAProxy directory:
+
+cp haproxy.pem /etc/kolla/haproxy/
+
+#########Reload the HAProxy Container:#########
+Restart the HAProxy container to apply the new certificate:
+
+docker restart haproxy
+
+#######Verification:###########
+Confirm that the SSL certificate is properly applied by accessing the domain over HTTPS and checking the certificate details.
+
+
+
