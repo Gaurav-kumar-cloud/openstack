@@ -1,0 +1,67 @@
+###########Integration commands for ceph&openstack###############
+############create pools for openstack integration##########
+ceph osd pool create volumes
+ceph osd pool create images
+ceph osd pool create vms
+ceph osd pool create gnocchi
+ceph osd pool create backup
+
+######Verify##########
+ceph osd pool ls
+
+#########initialize the pools ##############
+rbd pool init volumes
+rbd pool init images
+rbd pool init vms
+rbd pool init gnocchi
+rbd pool init backup
+
+###########create crush rules###########
+sudo ceph osd crush rule create-replicated replicated_hdd default host hdd
+sudo ceph osd crush rule dump
+sudo ceph osd crush rule ls
+sudo ceph config dump | grep osd_memory_target
+sudo ceph config dump | grep mgr
+sudo ceph config set mgr mgr/cephadm/autotune_memory_target_ratio 0.2
+sudo ceph config dump | grep mgr
+sudo ceph osd pool create hddvolumes
+sudo ceph osd pool set hddvolumes crush_rule replicated_hdd
+
+##################Create keyrings ####################
+ceph auth get-or-create client.glance mon 'profile rbd' osd 'profile rbd pool=images' mgr 'profile rbd pool=images' > /root/ceph.client.glance.keyring
+
+ceph auth get-or-create client.cinder mon 'profile rbd' osd 'profile rbd pool=volumes, profile rbd pool=vms, profile rbd-read-only pool=images' mgr 'profile rbd pool=volumes, profile rbd pool=vms' > /root/ceph.client.cinder.keyring
+
+ceph auth get-or-create client.cinder-backup mon 'profile rbd' osd 'profile rbd pool=backups' mgr 'profile rbd pool=backups' > /root/ceph.client.cinder-backup.keyring
+
+ceph auth get-or-create client.gnocchi mon 'profile rbd' osd 'profile rbd pool=gnocchi' mgr 'profile rbd pool=gnocchi' > /root/ceph.client.gnocchi.keyring
+
+ceph auth add client.manila mon 'profile rbd' osd 'profile rbd pool=gnocchi' mgr 'profile rbd pool=gnocchi' > /root/ceph.client.gnocchi.keyring
+
+ceph auth get-or-create client.nova mon 'allow r' osd 'allow class-read object_prefix rbd_children, allow rwx pool=vms, allow rx pool=images' -o /root/ceph.client.nova.keyring
+
+#############For manila #########################
+Setup Manila with CephFS /Create Pool for Manila
+
+ceph osd pool create cephfs_data
+rbd pool init cephfs_data
+
+###########Configure Manila Keyring:#######
+
+ceph auth caps client.manila osd 'allow rw pool=cephfs_data' mgr 'allow rw' mon 'allow r'
+ceph auth get client.manila -o /root/manila.keyring
+
+######Create CephFS Volume:######
+
+ceph fs volume create cephfs_dataS
+
+#######Setup NFS-Ganesha Cluster:###### 
+
+ceph nfs cluster create nfsgan1 ceph2
+
+##########Create NFS Export:####
+
+ceph nfs export create cephfs --cluster-id nfsgan1 --pseudo-path /nfsgan1share --fsname cephfs_dataS
+
+
+
