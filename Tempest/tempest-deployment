@@ -1,0 +1,51 @@
+#########OpenStack Tempest Testing Procedure###############
+This document outlines the procedure for setting up and running Tempest tests in an OpenStack environment.
+
+######Prerequisites#######
+    OpenStack deployment must be up and running.
+    Python 3 must be installed.
+    Network access to the OpenStack API endpoints.
+
+##########Clone the Tempest Repository#######
+git clone https://opendev.org/openstack/tempest
+cd tempest
+
+#######Create a Python Virtual Environment##########
+python3 -m venv tempest-venv
+source tempest-venv/bin/activate
+
+###### Install Tempest#########
+pip install .
+
+#######Initialize Tempest Configuration##########
+tempest init cloud-01
+cd cloud-01/etc
+
+#######Configure Tempest############
+mv tempest.conf.sample  tempest.conf
+vi tempest.conf
+
+########Upgrade Packages################
+pip install --upgrade pip setuptools wheel
+pip install --upgrade oslo.config oslo.log tempest
+
+#########List Tempest Tests###############
+1)To list all available smoke tests, run:
+tempest run --list-tests | grep ",smoke"
+
+2)To list object storage smoke tests, run:
+tempest run --list-tests | grep "object_storage.*smoke"
+
+3)To list smoke tests excluding object storage, run:
+tempest run --list-tests | grep "smoke" | grep -v "object_storage"
+
+##########Create a Selected Tests List###########
+vi selected_tests.txt
+    -- paste the tests in this file without object_storage
+    
+###########Run Selected Tests##############  
+tempest run --include-list selected_tests.txt
+
+##########Save Test Results###############
+tempest run --include-list selected_tests.txt | tee "tempest_results_$(date +%Y%m%d_%H%M%S).txt"
+    
