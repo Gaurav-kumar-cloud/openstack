@@ -1,0 +1,85 @@
+############when we deploy openstack and ceph on same 3 nodes###########
+vi /etc/kolla/neutron-server/neutron.conf
+   [experimental]
+    linuxbridge = true
+        
+#####flavor creating#####
+openstack flavor create --id 1 --ram 512 --disk 1 --vcpus 1 m1.tiny
+openstack flavor create --id 2 --ram 2048 --disk 20 --vcpus 1 m1.small
+openstack flavor create --id 3 --ram 4096 --disk 40 --vcpus 2 m1.medium
+openstack flavor create --id 4 --ram 8192 --disk 80 --vcpus 4 m1.large
+openstack flavor create --id 5 --ram 16384 --disk 160 --vcpus 8 m1.xlarge
+
+########image upload#########
+https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img
+https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+
+##########to upload images on openstack##########
+openstack image create "ubuntu"   --file noble-server-cloudimg-amd64.img   --disk-format qcow2   --container-format bare   --public
+
+#######completely destroy openstack#############
+docker rm -f nova_libvirt                      (on all nodes)
+kolla-ansible -i /etc/kolla/multinode destroy --yes-i-really-really-mean-it
+rm -rf /etc/kolla /var/lib/docker /var/lib/kolla /var/lib/nova /var/lib/cinder
+docker ps -a --format '{{.ID}} {{.Image}}' | grep -v 'quay.io/ceph/' | awk '{print $1}' | xargs -r docker rm -f     (remove all container except ceph)-optional
+sudo docker system prune -a --volumes -f
+sudo rm -rf /var/lib/docker
+sudo rm -rf /etc/kolla
+rm -rf kolla-ansible  # if cloned from git
+sudo lvremove -f cinder-volumes
+sudo vgremove cinder-volumes
+sudo pvremove /dev/sdb
+rm -f multinode
+rm -f /etc/kolla/passwords.yml
+rm -f /etc/kolla/globals.yml
+sudo apt purge -y docker.io python3-venv python3-dev libffi-dev gcc libssl-dev ansible git
+sudo apt autoremove -y
+sudo rm -rf /opt/osp
+
+##########completely destroy ceph##########
+cephadm rm-cluster --force --zap-osds
+rm -rf /var/lib/ceph /etc/ceph
+ovs-vsctl del-br br-ex
+ovs-vsctl del-br br-int
+netplan apply
+apt remove --purge docker-ce podman python3-openstackclient -y
+apt autoremove -y
+reboot
+
+#######fix the administrator error################
+docker exec -it horizon bash
+cd /var/log/kolla/horizon
+
+docker exec -it horizon bash
+source /var/lib/kolla/venv/bin/activate
+python manage.py compress --force
+or
+django-admin compress --settings=openstack_dashboard.settings
+
+
+#######If this still fails:################
+Edit local_settings.py (usually found at /etc/kolla/horizon/local_settings or /etc/openstack-dashboard/local_settings depending on your setup):
+COMPRESS_OFFLINE = False
+exit
+docker restart horizon
+
+
+#########shift integration with keystone##########
+sudo ceph config set global rgw_keystone_api_version 3
+sudo ceph config set global rgw_keystone_accepted_roles "_member_, member, admin, ResellerAdmin"
+sudo ceph config set global rgw_keystone_admin_password <G2OiMHbX4JUCNSua0sml7iXcWrRUrGvIhYTTfprQ>
+sudo ceph config set global rgw_keystone_admin_domain Default
+sudo ceph config set global rgw_keystone_admin_project service
+sudo ceph config set global rgw_keystone_admin_user ceph_rgw
+sudo ceph config set global rgw_keystone_url <http://10.10.23.75:5000>
+sudo ceph config set global rgw_keystone_verify_ssl false
+sudo ceph config set global rgw_s3_auth_use_keystone true
+sudo ceph config set global rgw_swift_account_in_url false
+ceph orch restart rgw.radosGW
+
+##########iopenstack inerview questions#############
+https://mindmajix.com/openstack-interview-questions-answers
+
+##########kubernetes links############
+https://openmetal.io/resources/blog/levan-how-to-create-a-kubernetes-template-in-openstack/
+https://openmetal.io/docs/manuals/tutorials/lb-with-octavia
