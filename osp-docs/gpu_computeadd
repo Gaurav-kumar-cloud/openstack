@@ -1,0 +1,163 @@
+##### Reference - https://medium.com/@thomasal14/gpu-passthrough-in-openstack-da2a98a16f7b
+
+#############This is to add a compute node with the GPU passthrough #################
+############# Ensure no nvidia drivers are installed on the host OS of the GPU coompute ########
+
+vi /etc/default/grub     (run on new compute that want to you add)
+...
+GRUB_CMDLINE_LINUX_DEFAULT="intel_iommu=on"
+...
+
+sudo update-grub
+reboot
+
+
+############ Chec kthe drivers loaded ##################################
+sudo lspci -nn | grep NVIDIA
+#04:00.0 VGA compatible controller [0300]: NVIDIA Corporation GM200 [GeForce GTX TITAN X] [10de:17c2] (rev a1)
+#04:00.1 Audio device [0403]: NVIDIA Corporation GM200 High Definition Audio [10de:0fb0] (rev a1)
+
+sudo lspci -s 04:00.0 -k
+#04:00.0 VGA compatible controller: NVIDIA Corporation GM200 [GeForce GTX TITAN X] (rev a1)
+#        Subsystem: NVIDIA Corporation GM200 [GeForce GTX TITAN X]
+#        Kernel driver in use: nouveau
+#        Kernel modules: nvidiafb, nouveau
+
+sudo lspci -s 04:00.1 -k
+#04:00.1 Audio device: NVIDIA Corporation GM200 High Definition Audio (rev a1)
+#        Subsystem: NVIDIA Corporation GM200 High Definition Audio
+#        Kernel driver in use: snd_hda_intel
+#        Kernel modules: snd_hda_intel
+
+
+######################## Blacklist the nvidia modules ###################
+vi /etc/modprobe.d/blacklist-nvidia.conf
+
+blacklist nouveau
+blacklist nvidiafb
+
+######################## Whitelist the drivers we want ##################
+vi /etc/modprobe.d/vfio.conf
+
+options vfio-pci ids=10de:17c2,10de:0fb0
+
+vi /etc/modules-load.d/modules.conf
+
+vfio-pci
+
+######################## Edit grub for the changes ######################
+vi /etc/default/grub
+
+GRUB_CMDLINE_LINUX_DEFAULT="intel_iommu=on vfio-pci.ids=10de:17c2,10de:0fb0 vfio_iommu_type1.allow_unsafe_interrupts=1 modprobe.blacklist=nvidiafb,nouveau"
+
+######################## Update the grub ################################
+sudo update-grub
+sudo reboot
+
+
+####################### Post reboot #####################################
+sudo lspci -s 04:00.0 -nnk
+#04:00.0 VGA compatible controller: NVIDIA Corporation GM200 [GeForce GTX TITAN X] (rev a1)
+#        Subsystem: NVIDIA Corporation GM200 [GeForce GTX TITAN X]
+#        Kernel driver in use: vfio-pci
+#        Kernel modules: nvidiafb, nouveau
+
+sudo lspci -s 04:00.1 -nnk
+#04:00.1 Audio device: NVIDIA Corporation GM200 High Definition Audio (rev a1)
+#        Subsystem: NVIDIA Corporation GM200 High Definition Audio
+#        Kernel driver in use: vfio-pci
+#        Kernel modules: snd_hda_intel
+
+
+##########Enable password less ssh access for root user ########
+ssh-copy-id root@compute5
+
+##########Add hosts file entry on the ansible node used for deployment ##########
+10.10.13.12 compute5
+
+#########Check if ansible can reach the node #######
+source /opt/osp/bin/activate
+
+
+##########Change hostname of the node being added ###########
+hostnamectl set-hostname comp5
+
+########## Verify appropriate networking exists #############
+ping 10.10.12.9
+
+########## Add the node to ansible inventory file #########
+[compute]
+compute1
+compute5
+
+########### Add relevant OSP config unedr /etc/kolla/config ##########
+mkdir -p /etc/kolla/config/nova
+
+####### vi /etc/kolla/config/nova/compute1/nova.conf ###########
+[pci]
+report_in_placement = True
+device_spec = { "vendor_id": "10de", "product_id": "1eb8" }
+alias: { "vendor_id":"10de", "product_id":"1eb8", "device_type":"type-PCI", "name":"tesla-T4" }
+
+###### vi /etc/kolla/config/nova/nova-api.conf ##############
+[pci]
+alias: { "vendor_id":"10de", "product_id":"2204", "device_type":"type-PCI", "name":"geforce-3090" }
+alias: { "vendor_id":"10de", "product_id":"1eb8", "device_type":"type-PF", "name":"tesla-T4" }
+
+[filter_scheduler]
+enabled_filters = AggregateInstanceExtraSpecsFilter,AvailabilityZoneFilter,PciPassthroughFilter
+available_filters = nova.scheduler.filters.all_filters
+
+
+##### vi /etc/kolla/config/nova/nova-scheduler.conf ############## 
+[filter_scheduler]
+enabled_filters = AggregateInstanceExtraSpecsFilter,AvailabilityZoneFilter,PciPassthroughFilter
+available_filters = nova.scheduler.filters.all_filters
+
+########### Check if ansible can reachthe node ##############
+ansible -i multinode all -m ping
+
+######### Bootstrap the servers ##############
+kolla-ansible -i multinode bootstrap-servers --limit compute5
+
+######### Pull docker images ################
+kolla-ansible -i multinode pull --limit compute5
+
+######### If pull giving issues in http+docker ########
+####Run this on compute node ###########
+pip uninstall requests
+pip install requests==2.31.0
+
+######### Do a precheck ################
+kolla-ansible -i multinode prechecks --limit compute5
+
+######### Proceed to deploy #################
+kolla-ansible -i multinode deploy --limit compute5
+
+######### Enrol the node to prometheus #################
+kolla-ansible -i multinode deploy -t prometheus
+
+
+
+#######################Deploy changes to the controller nodes #################
+# API and scheduler changes will go on these nodes
+kolla-ansible -i multinode deploy -t nova-api --limit cont1,cont2,cont3
+
+#########################Restart nova scheduler if required ######################
+systemctl restart kolla-nova_scheduler-container.service
+
+
+###############################In general when enabling GPU's advisable to have host aggregates ##############################
+#From the GUI create two host aggregates,
+#Normal compute nodes will be grouped in GENERAL_COMPUTE aggregate
+#GPU pass through will be grouped in GENERAL_GPU_PASS aggregare
+
+
+
+openstack aggregate set --property cpu=true GENERAL_COMPUTE
+openstack aggregate set --property gpupass=true GENERAL_GPU_PASS
+openstack flavor set --property cpu=true 4b109304-adc2-4130-9b0a-30dfc074e70d
+openstack flavor set --property gpupass=true 6612807c-71bc-4a22-94c5-545a252e8097
+
+#Restart the nova schedulers on all the controller nodes
+systemctl restart kolla-nova_scheduler-container.service
