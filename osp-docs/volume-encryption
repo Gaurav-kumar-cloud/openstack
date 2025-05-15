@@ -1,0 +1,91 @@
+##############cinder-volume encryption#################
+
+#########edit /et/kolla/config/cinder.conf file#########
+add this section
+[key_manager]
+backend = barbican
+
+kolla-ansible -i ./all-in-one deploy -t cinder
+
+#######edit /etc/kolla/config/nova.conf#####
+[key_manager]
+backend = barbican
+
+kolla-ansible -i ./aal-in-one deploy -t nova
+
+#######create volume type and set properties#########
+openstack volume type create   --encryption-provider luks   --encryption-cipher aes-xts-plain64   --encryption-key-size 256   --encryption-control-location front-end   --property volume_backend_name=rbd-1   LUKS
+
+
+########create a volume for testing###
+openstack volume create --size 1 --type LUKS 'Encrypted-Test-Volume'
+
+
+#########testing key/payload barbican is working or not########
+pip install python-barbicanclient
+openstack secret store --name encryption-key --payload '{"algorithm": "aes", "bit_length": 256}' --algorithm aes --bit-length 256
+
+#######check secret list#########
+check secrets key for volume 
+openstack secret list
+
+########check volume is encrypted = true##########
+openstack volume show <Encrypted-Test-Volume>
+
+####### check properties of encrypted volume#########
+openstack volume show <9dfa4955-b846-4bb7-8173-8f3151dce0f1> -f json | jq '.properties'
+
+
+
+#########Testing of encryption################
+1) create an instance 
+openstack server create --image cirros-0.3.1-x86_64-disk --flavor m1.tiny TESTVM
+
+2) create 2 volume like unencrypted and encrypted.
+    openstack volume create --size 1 'unencrypted volume'
+    openstack volume create --size 1 --type LUKS 'encrypted volume'
+    
+3)attach the volume to the instance
+    openstack server add volume --device /dev/vdb TESTVM 'unencrypted volume'  
+    openstack server add volume --device /dev/vdc TESTVM 'encrypted volume'
+    
+4) add the random data inside the volumes
+     echo "Hello, world (unencrypted /dev/vdb)" >> /dev/vdb  
+     echo "Hello, world (encrypted /dev/vdc)" >> /dev/vdc
+     
+5) export the volumes from ceph by using rbd export
+   rbd export volumes/volume-<uuid> unencrypted.raw
+   rbd export volumes/volume-<uuid> encrypted.raw
+   
+6) check the data inside the volumes:
+   strings unencrypted.raw | head
+      output --- Hello, world (unencrypted /dev/vdb)
+   strings encrypted.raw | head  
+      output ---  LUKS
+xts-plain64
+sha256
+#n)t
+c03b4992-c5c2-45eb-98b2-9a3aea551c58
+}-2&
++Jom(
+e {b
+?*,%
+RZ#|
+
+if this outputs you get so your encryption is successfully working.
+
+
+or after point-4
+openstack volume list 
+lvs
+sudo cryptsetup luksDump /dev/mapper/cinder--volumes-volume--a4bcde9f--945a--400f--a749--03e51a50fb03            (encrypted volume)
+
+
+
+      
+     
+
+
+
+
+
