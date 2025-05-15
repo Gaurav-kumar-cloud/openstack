@@ -1,0 +1,133 @@
+############Creating Load Balancer with Octavia in OpenStack############
+This guide provides a step-by-step process for configuring and deploying a load balancer using Octavia in an OpenStack environment.
+1) kolla-ansible octavia-certificates  (generate the certificates)
+
+########Prerequisites:######
+    Ensure that OpenStack is deployed and configured.
+    Octavia service is installed and enabled.
+    Sufficient resources for deploying the Amphora instances.
+
+##########Generate Certificates for Octavia########
+kolla-ansible -i multinode octavia-certificates
+
+#########Download the Amphora Image#####
+cd /etc/kolla/
+wget https://swift.services.a.regiocloud.tech/swift/v1/AUTH_b182637428444b9aa302bb8d5a5a418c/openstack-octavia-amphora-image/octavia-amphora-haproxy-2025.1.qcow2 -O /etc/kolla/octavia-amphora.qcow2
+
+######Update Bond Interface Configuration#######
+Remove the IP address assigned to the bond interface that is intended for the load balancer (e.g., br-lb) in the globals.yml file.     
+Remove the ip from the bond that you have added for (br-lb) in globals.yaml
+
+########Reconfigure Octavia#############
+ kolla-ansible -i ./all-in-one reconfigure -t octavia
+
+##########Upload the Amphora Image############
+openstack image create octavia-amphora-haproxy   --file /etc/kolla/octavia-amphora.qcow2   --disk-format qcow2   --container-format bare --project <service_id>  --tag amphora   --public    (upload image)
+
+###########Install Octavia Client##########
+6)pip install python-octaviaclient
+
+########Verify Load Balancer Service############
+7)openstack loadbalancer list
+
+######### Create Test VMs##############
+create two vm on openstack first like ubuntu1,ubuntu2
+- install apache2 on both server
+- apt install apache2 -y
+- systemctl start apache2
+- systemctl enable apache2
+
+##########Create Load Balancer via GUI#########
+create load balancer by GUI.
+
+
+
+
+#########################################################################################################################################################################################################
+
+https://www.server-world.info/en/note?os=Ubuntu_20.04&p=openstack_yoga4&f=7
+
+##########OpenStack Magnum Cluster Deployment Guide#########
+
+#######Download Fedora CoreOS Image and Add to Glance#########
+On the Control Node:
+wget https://builds.coreos.fedoraproject.org/prod/streams/stable/builds/35.20220313.3.1/x86_64/fedora-coreos-35.20220313.3.1-openstack.x86_64.qcow2.xz   (download the image)
+
+#######Extract the image:####
+xz -dv fedora-coreos-35.20220313.3.1-openstack.x86_64.qcow2.xz 
+
+######Upload the image to OpenStack Glance:########
+openstack image create Fedora-CoreOS --file=fedora-coreos-35.20220313.3.1-openstack.x86_64.qcow2 --disk-format=qcow2 --container-format=bare --property os_distro='fedora-coreos' --public    (upload the image on openstack.
+
+#######Install the Magnum client:########
+pip install python-magnumclient
+
+##################### create Kubernetes Cluster template###################
+4) openstack coe cluster template create k8s-cluster-template \       
+--image Fedora-CoreOS \
+--external-network <public> \
+--fixed-network <private> \
+--fixed-subnet <private-subnet> \
+--dns-nameserver <10.0.0.10> \
+--network-driver flannel \
+--docker-storage-driver overlay2 \
+--docker-volume-size 10 \
+--master-flavor <m1.large> \
+--flavor <m1.large> \
+--coe kubernetes 
+
+
+###################### create Kubernetes Cluster with single-master node############################
+5)openstack coe cluster create gaurav-k8s1 \
+  --cluster-template Kubernetes-Single-Master \
+  --master-count 1 \
+  --node-count 1 \
+  --keypair cephosp-key \
+  --fixed-network Private \
+  --fixed-subnet  Private-subnet \
+  --master-lb-enabled \
+  --labels auto_scaling_enabled=true,min_node_count=2,max_node_count=3                                        (create cluster by cli or GUI)
+
+##############If you control the environment and can install packages, make sure the heatclient is installed:###############
+6) pip install python-heatclient
+
+##################### confirm checkpoints for creation###################
+openstack stack list --nested | grep k8s-cluster 
+
+###################### if sucessfully finished, state is [CREATE_COMPLETE] + [HEALTHY]##################
+7) openstack coe cluster list
+8) openstack stack list
+
+################ instances are running#####################
+9) openstack server list 
+
+################## install [kubectl] to access the kubernet cluster#######################
+10) snap install kubectl --classic    
+
+11) openstack coe cluster config k8s-cluster 
+12) export KUBECONFIG=/root/config
+      
+13) kubectl get nodes
+14) kubectl get pods -n kube-system
+15) kubectl create deployment test-nginx --image=nginx --replicas=2      (verify cluster to crete test pod)
+16)  kubectl get pods -o wide 
+17) kubectl expose deployment test-nginx --type="NodePort" --port 80 
+18) kubectl get services test-nginx 
+19) kubectl port-forward service/test-nginx --address 0.0.0.0 10443:80 & 
+20)  curl localhost:10443  
+21) 
+#############If you'd like to use Magnum with common users, it needs to change some settings.###################
+21) openstack role add --project hiroshima --user serverworld heat_stack_owner          (# for example, add [serverworld] user in [hiroshima] project to [heat_stack_owner] role)
+22) vi /etc/neutron/policy.json                   # on the Node Neutron server is running, change settings like follows
+     # create new
+     # overwrite some settings
+
+{
+  "create_port:fixed_ips:subnet_id": "",
+  "create_port:allowed_address_pairs": "",
+  "create_port:allowed_address_pairs:ip_address": "",
+}
+
+23) systemctl restart neutron-server 
+24) openstack coe cluster list                # that's OK, common users can create clusters
+
