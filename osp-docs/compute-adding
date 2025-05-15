@@ -1,0 +1,49 @@
+##########Enable password less ssh access for root user ########
+ssh-copy-id root@compute5
+
+##########Add hosts file entry on the ansible node used for deployment ##########
+10.10.13.12 compute5
+
+
+########## Add the node to ansible inventory file #########
+[compute]
+compute1
+compute5
+
+
+#########Check if ansible can reach the node #######
+source /opt/osp/bin/activate
+ansible -i multinode all -m ping
+
+##########Change hostname of the node being added ###########
+hostnamectl set-hostname comp5
+
+########## Verify appropriate networking exists #############
+ping 10.10.12.9
+
+
+######### Bootstrap the servers ##############
+kolla-ansible -i multinode bootstrap-servers --limit compute5
+
+######### Pull docker images ################
+kolla-ansible -i multinode pull --limit compute5
+
+######### Do a precheck ################
+kolla-ansible -i multinode prechecks --limit compute5
+
+######### Proceed to deploy #################
+kolla-ansible -i multinode deploy --limit compute5
+
+#######################Deploy changes to the controller nodes #################
+# API and scheduler changes will go on these nodes
+kolla-ansible -i multinode deploy -t nova --limit cont1,cont2,cont3
+
+
+######### Enrol the node to prometheus #################
+kolla-ansible -i multinode deploy -t prometheus,grafana
+
+
+###############If it fails on the request for http+docker ################
+## On the compute node
+pip uninstall requests
+pip install requests==2.31.0
