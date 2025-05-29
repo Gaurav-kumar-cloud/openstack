@@ -1,70 +1,79 @@
-#########Upgrading OpenStack Kolla-Ansible from Release 2023.1 to 2023.2######
-This document outlines the step-by-step procedure for upgrading an OpenStack deployment managed by Kolla-Ansible from release 2023.1 to 2023.2.
+#######Kolla-Ansible Upgrade & Reconfiguration Guide (2023.2)######
+This document outlines the steps to back up configuration, update Kolla-Ansible, regenerate passwords, and perform an upgrade on a multinode OpenStack deployment.
 
-#########Backup Kolla Configuration##########
-Before proceeding with the upgrade, create a backup of the current Kolla configuration directory:
+#########Backup Existing Kolla Configuration############
+cp -r /etc/kolla kolla.bak
 
-cp -r /etc/kolla /etc/kolla.bak
+#########Generate New Passwords & Merge with Existing#########
+cp /etc/kolla/passwords.yml passwords.yml.old
+cp /opt/osp/share/kolla-ansible/etc_examples/kolla/passwords.yml passwords.yml.new
+kolla-genpwd -p passwords.yml.new
+kolla-mergepwd --old passwords.yml.old --new passwords.yml.new --final /etc/kolla/passwords.yml
 
-###########Upgrade Kolla-Ansible##############
-Install the latest Kolla-Ansible release for 2023.2 using pip:
 
-pip3 install --upgrade git+https://opendev.org/openstack/kolla-ansible@stable/2023.2
+#########Upgrade Kolla-Ansible to 2023.2#########
+pip3 install --upgrade git+https://opendev.org/openstack/kolla-ansible@stable/2023.2               (only change the release during any latest upgradation)
 
-##########Install Kolla-Ansible Dependencies###########
-Run the following command to install the necessary dependencies:
 
+######### Install Required Dependencies###########
 kolla-ansible install-deps
 
-##########take backup of password.yml and genrate new password file and merge both old and new password.yml file##########
+
+##########edit globals file#########
+Note-
+   remove the 'ceph'  form the ceph keyrings.
    
-   cp /etc/kolla/passwords.yml passwords.yml.old
-   cp kolla-ansible/etc/kolla/passwords.yml passwords.yml.new
-   kolla-genpwd -p passwords.yml.new
-   kolla-mergepwd --old passwords.yml.old --new passwords.yml.new --final /etc/kolla/passwords.yml
+#######ReGenerate Configuration Files########
+kolla-ansible -i multinode genconfig
+
+#########Optional Overrides in globals.yml:########
+om_enable_rabbitmq_quorum_queues: false
+om_enable_rabbitmq_high_availability: true
+
+#########- Apply the HA Policy inside the RabbitMQ container:##########
+docker exec -it rabbitmq bash
+rabbitmqctl set_policy ha-all ".*" '{"ha-mode": "all"}' --priority 1
+rabbitmqctl list_policies
+exit
+
+########Pull Updated Docker Images##########
+kolla-ansible -i multinode pull
+
+#################Stop Targeted OpenStack Services##########(optional)
+kolla-ansible -i multinode stop --tags nova,neutron,keystone,glance,cinder,heat,placement,octavia --yes-i-really-really-mean-it
+
+###########Reset RabbitMQ State#############
+kolla-ansible -i multinode rabbitmq-reset-state
+
+###########Reconfigure RabbitMQ############
+kolla-ansible -i multinode reconfigure --tags rabbitmq
+
+#############Reconfigure Core Services#############(optional)
+kolla-ansible -i multinode reconfigure --tags mariadb,rabbitmq,keystone
+kolla-ansible -i multinode reconfigure --tags nova,neutron,glance,cinder,heat,placement,octavia
+
+###########Run Prechecks#############
+kolla-ansible -i multinode prechecks
+
+############Upgrade Controllers#############
+kolla-ansible -i multinode upgrade --limit controller1,controller2,controller3
+
+############Upgrade computes################
+kolla-ansible -i multinode upgrade --limit compute1
 
 
-#######Pull Updated Docker Images################
-Retrieve the updated container images for the new release:
-
-kolla-ansible pull
-
-##############Prechecks############
-Run the prechecks command to verify the environment:
-
-kolla-ansible prechecks
 
 
-###########RabbitMQ Error#######
+###error at stage of precheckes during upgrade to 2024.2
+TASK [cinder : Check if cinder_cluster_name is configured for HA configurations] 
+   solution is -  edit globals.yaml(add this line)
+   cinder_cluster_name: cinder-ha-cluster
 
--Edit /etc/kolla/globals.yml to include the following settings:
 
-   om_enable_rabbitmq_quorum_queues: false
-   om_enable_rabbitmq_high_availability: true
 
-- Apply the HA Policy inside the RabbitMQ container:
 
-   docker exec -it rabbitmq bash
-   rabbitmqctl set_policy ha-all ".*" '{"ha-mode": "all"}' --priority 1
-   rabbitmqctl list_policies
-   exit
 
-#########Upgrade RabbitMQ###################
-Before upgrading the entire environment, upgrade RabbitMQ separately:
-
-- Run the RabbitMQ reconfigure:
-
-  kolla-ansible -i ./all-in-one reconfigure -t rabbitmq
-
-Once RabbitMQ is successfully upgraded, proceed with the rest of the environment upgrade as required.
-
-##########upgrade whole environment##############
-     kolla-ansible -i ./all-in-one upgrade --limit controller1 
-     
-     
-     
 https://docs.openstack.org/kolla-ansible/2023.1/user/operating-kolla.html
 https://docs.openstack.org/kolla-ansible/2023.2/user/operating-kolla.html
 https://docs.openstack.org/kolla-ansible/2023.1/reference/message-queues/rabbitmq.html?utm_source=chatgpt.com
 https://www.linkedin.com/pulse/upgrade-ceph-from-quincy-reef-release-satish-patel-1ktse
-
