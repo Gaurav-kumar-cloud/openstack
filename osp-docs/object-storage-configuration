@@ -1,0 +1,49 @@
+#########Ceph Object Gateway Integration with Keystone (Swift Authentication)##########
+######## Set the Keystone API version##########
+sudo ceph config set global rgw_keystone_api_version 3
+
+######### Define the accepted roles for Keystone users####
+sudo ceph config set global rgw_keystone_accepted_roles "_member_, member, admin, ResellerAdmin"
+
+######### Set the Keystone admin user's password#########
+sudo ceph config set global rgw_keystone_admin_password <G2OiMHbX4JUCNSua0sml7iXcWrRUrGvIhYTTfprQ>
+
+########## Define the domain used by the admin user######
+sudo ceph config set global rgw_keystone_admin_domain Default
+
+########### Set the Keystone project used by the admin user##########
+sudo ceph config set global rgw_keystone_admin_project service
+
+########### Define the admin user that the Ceph RGW will use to authenticate#########
+sudo ceph config set global rgw_keystone_admin_user ceph_rgw
+
+############ Provide the Keystone endpoint URL###########
+sudo ceph config set global rgw_keystone_url <http://10.10.23.75:5000>
+
+############ Disable SSL verification (not recommended for production)#########
+sudo ceph config set global rgw_keystone_verify_ssl false
+
+############ Enable Keystone authentication for S3 API#########
+sudo ceph config set global rgw_s3_auth_use_keystone true
+
+############ Disable the use of account name in Swift URL path########
+sudo ceph config set global rgw_swift_account_in_url false
+
+###########Restart RGW Services############
+ceph orch restart rgw.radosGW
+
+
+
+
+
+
+
+
+
+
+##########iopenstack inerview questions#############
+https://mindmajix.com/openstack-interview-questions-answers
+
+##########kubernetes links############
+https://openmetal.io/resources/blog/levan-how-to-create-a-kubernetes-template-in-openstack/
+https://openmetal.io/docs/manuals/tutorials/lb-with-octavia
