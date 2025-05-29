@@ -1,0 +1,40 @@
+#############Ceph Upgrade: Quincy → Reef############
+This guide covers upgrading your Ceph cluster from Quincy to Reef (v18.2.7) using cephadm, with explanation for each command used in the process.
+
+########Pre-Upgrade: Check Cluster Status###########
+ceph -s 
+ceph version
+ceph mon state
+ceph mon stat
+ceph mon dump
+ceph osd metadata | grep osd_objectstore
+
+
+#########Update Repositories to Reef#############
+sed -i 's/quincy/reef/' /etc/apt/sources.list.d/ceph.list
+cephadm add-repo --release reef
+
+
+######### Prevent Rebalancing During Upgrade##########
+ceph osd set noout
+
+
+#########Update Cephadm & Pull Reef Image#############
+cephadm install                       (Re-installs or upgrades the cephadm binary to the latest version)
+cephadm pull                          (Pulls the latest Reef container image (v18.2.7) from the repository.)
+
+
+#########Start the Upgrade Process#####################
+ceph orch upgrade start quay.io/ceph/ceph:v18.2.7
+ceph orch upgrade status
+
+
+#########Post-Upgrade Verification#####################
+ceph version
+ceph versions
+ceph osd unset noout
+ceph -s
+
+
+
+https://www.linuxtek.ca/2024/04/05/upgrading-ceph-quincy-to-ceph-reef-on-proxmox-ve-8-1/
