@@ -1,8 +1,19 @@
+##############Configure SSH Access from Jump Server#################
+##########➤ Add New Node Entry in ~/.ssh/config on Jump Server:##########
+Host storage10
+ip  10.10.13.60
+
+
+#####Add Jump Server's Public Key to the New Node#######
+############Paste this public key into /root/.ssh/authorized_keys on the new node:#########
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIByjw39zJkMqXeK6NS/XPY+xGXXedfP2luFzNvS0mWY8 himanshu@WIN-NN2H4O1B3QR
+
+
 ##########Enable password less ssh access for root user ########
-ssh-copy-id root@compute5
+ssh-copy-id root@<compute5>
 
 ##########Add hosts file entry on the ansible node used for deployment ##########
-10.10.13.12 compute5
+10.10.13.12 <compute5>
 
 
 ########## Add the node to ansible inventory file #########
