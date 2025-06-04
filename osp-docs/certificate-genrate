@@ -11,6 +11,16 @@ This document outlines the steps to generate an SSL certificate using Certbot an
     Open the first terminal and connect to the nginx instance.
     Open the second terminal and connect to the same nginx instance.
 
+#########if certboot-nginx not installed#############
+sudo apt install certbot python3-certbot-nginx    (remove after certificate generate successfully)
+
+##########lookup domain#############
+dig d1-cloud.dodil.io  +short
+nslookup d1-cloud.dodil.io
+
+##########first dry run the certboot#############
+certbot certonly --manual --email <singh.rahul1603@gmail.com> -d  <d1-cloud.dodil.io> --dry-run
+
 #######Generate SSL Certificate Using Certbot:#######
    On the first terminal, run the following command:
    
