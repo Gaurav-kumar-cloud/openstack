@@ -1,0 +1,423 @@
+Creating a Ceph Admin User
+
+[useradd -m -s /bin/bash cephadmin]
+
+    useradd: Creates a new user account.
+    -m: Creates a home directory for the user (/home/cephadmin).
+    -s /bin/bash: Sets /bin/bash as the default shell for the user.
+    cephadmin: The name of the user being created.
+
+[passwd cephadmin]
+
+    Prompts to set a password for the cephadmin user.
+
+[echo "cephadmin ALL=(ALL:ALL) NOPASSWD:ALL" >> /etc/sudoers.d/cephadmin]
+
+    Grants cephadmin sudo privileges without requiring a password.
+    ALL=(ALL:ALL) NOPASSWD:ALL:
+    Can run any command as any user (ALL=(ALL:ALL)).
+    Does not require a password (NOPASSWD:ALL).
+    /etc/sudoers.d/cephadmin: A separate file to manage sudo privileges safely.
+
+[chmod 0440 /etc/sudoers.d/cephadmin]
+
+    Sets read-only permissions for the sudoers file to prevent accidental modifications.
+    0440:
+    Read-only for the owner and group.
+    No permissions for others.
+
+########Installing Docker on Each Ceph Node (Ubuntu)################
+Install Required Dependencies
+
+[sudo apt install apt-transport-https ca-certificates curl software-properties-common -y]
+
+    apt-transport-https: Allows APT to fetch packages over HTTPS.
+    ca-certificates: Provides trusted certificates for secure communication.
+    curl: Command-line tool for downloading files (used to get the Docker GPG key).
+    software-properties-common: Adds the ability to manage repositories.
+    -y: Automatically confirms installation.
+
+########Add Docker's Official GPG Key#########
+
+[curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg]
+
+    curl -fsSL <URL>: Fetches the GPG key securely.
+    gpg --dearmor: Converts the key into a format usable by APT.
+    -o /usr/share/keyrings/docker-archive-keyring.gpg: Stores the key in a safe location.
+
+######Add Docker Repository######
+
+[echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null]
+
+    Adds Docker's official repository to APT sources.
+    $(dpkg --print-architecture): Dynamically detects system architecture (e.g., amd64).
+    $(lsb_release -cs): Retrieves the Ubuntu version (e.g., jammy for Ubuntu 22.04).
+    sudo tee /etc/apt/sources.list.d/docker.list: Writes the repository details into a new file.
+    > /dev/null: Suppresses output.
+
+##########Update APT and Install Docker########
+
+[sudo apt -y update]
+
+    Updates the package list to include the new Docker repository.
+
+[sudo apt -y install docker-ce]
+
+    Installs Docker Community Edition (docker-ce).
+
+##########Enable and Start Docker Service##########
+
+[sudo systemctl enable --now docker]
+
+    Enables Docker to start on boot (enable).
+    Starts Docker immediately (--now).
+    
+    
+### Adding Ceph’s GPG Key############
+
+[curl -fsSL https://download.ceph.com/keys/release.asc | sudo gpg --dearmor -o /usr/share/keyrings/ceph-release.gpg]
+
+      curl -fsSL <URL>:
+        Fetches Ceph’s official GPG signing key securely.
+        -f: Fail silently on server errors.
+        -s: Silent mode (no progress output).
+        -S: Show errors if they occur.
+        -L: Follow redirects if the URL changes.
+    gpg --dearmor:
+        Converts the ASCII-armored key into a binary format that APT can use.
+    -o /usr/share/keyrings/ceph-release.gpg:
+        Saves the key in a safe location for package verification.
+
+ #####Adding Ceph’s Official Repository##############
+
+[echo "deb [signed-by=/usr/share/keyrings/ceph-release.gpg] https://download.ceph.com/debian-reef/ $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/ceph.list]
+
+    Adds the Ceph package repository for the Reef release.
+      signed-by=/usr/share/keyrings/ceph-release.gpg:
+    Ensures packages from this repo are verified using the key we just added.
+      https://download.ceph.com/debian-reef/:
+    The official Ceph repository for Debian-based systems.
+    $(lsb_release -sc):
+      Dynamically fetches the Ubuntu version codename (e.g., jammy for Ubuntu 22.04).
+    sudo tee /etc/apt/sources.list.d/ceph.list:
+       Writes this repo configuration into a new file.
+
+###### Updating APT and Checking Ceph Packages#########
+
+[sudo apt-get update]
+
+    Refreshes the package list so the system can see the new Ceph packages.
+
+[apt-cache policy ceph]
+
+    Shows available Ceph versions from all enabled repositories.
+    Example Output:
+
+    ceph:
+      Installed: (none)
+      Candidate: 18.2.4-1
+      Version table:
+         18.2.4-1 500
+            500 https://download.ceph.com/debian-reef jammy/main amd64 Packages
+
+    This helps verify that the system is pulling the correct version of Ceph.
+
+######Downloading Cephadm##########
+
+[curl --silent --remote-name --location https://github.com/ceph/ceph/raw/18.2.4/src/cephadm/cephadm]
+
+    Downloads the cephadm script directly from Ceph’s GitHub repository.
+    Options used:
+        --silent: Suppresses progress output.
+        --remote-name: Saves the file as cephadm (instead of using a random name).
+        --location: Follows redirects if the file has moved.
+
+####Making Cephadm Executable##########
+
+[chmod +x cephadm]
+
+    Gives execute permissions to the cephadm script so it can be run as a program.
+
+######Updating & Upgrading the System#########
+
+[apt -y update && apt -y upgrade]
+
+    Updates package lists (apt update).
+    Upgrades all installed packages to their latest versions (apt upgrade).
+    -y: Automatically confirms installation.
+
+######Installing Cephadm#########
+
+[apt -y install cephadm]
+
+    Installs Cephadm, the tool used for deploying and managing a Ceph cluster.
+
+[cephadm version]
+
+    Displays the installed Cephadm version to confirm a successful installation.
+
+######Adding Ceph’s Repository Again (Optional)##########
+
+[cephadm add-repo --release reef]
+
+    Adds the Ceph Reef repository to the system.
+    This step is optional because we already manually added the repo earlier.
+
+#######Installing Ceph Packages#########
+
+[sudo cephadm install]
+
+    Installs core Ceph packages, including Monitors, OSDs, and Managers.
+    This installs everything needed to deploy a Ceph cluster.
+
+[sudo cephadm install ceph-common]
+
+    Installs ceph-common, which includes essential Ceph client tools like:
+        ceph (CLI tool for managing Ceph).
+        rados (tool for interacting with Ceph object storage).
+        rbd (for managing RADOS Block Devices).
+        cephfs (for managing Ceph File System).
+        
+#########Bootstrap the Ceph Cluster on the First Node############
+
+[sudo cephadm bootstrap --mon-ip 10.121.223.21 \
+  --initial-dashboard-user admin \
+  --initial-dashboard-password admin098! \
+  --dashboard-password-noupdate]
+
+    Bootstraps the first Ceph node and sets up the initial cluster.
+    Options explained:
+        --mon-ip 10.121.223.21:
+            Sets the IP address of the first monitor (MON) node (where the cluster is initialized).
+        --initial-dashboard-user admin:
+            Creates the Ceph Dashboard admin user.
+        --initial-dashboard-password admin098!:
+            Sets the admin password for the dashboard.
+        --dashboard-password-noupdate:
+            Prevents Ceph from automatically changing the dashboard password during updates.
+    What happens after running this?
+        A Ceph monitor (MON) is deployed.
+        A Ceph manager (MGR) is deployed.
+        The Ceph Dashboard is enabled.
+        SSH keys are generated for managing other nodes.
+
+##########Copying SSH Keys to Other Ceph Nodes##########
+
+Ceph requires passwordless SSH access between nodes for cluster management.
+######Generate an SSH Key (on the first node)##########
+
+[ssh-keygen]
+
+    Creates a new SSH key pair (public/private) for secure authentication.
+    It will store:
+        Private key: ~/.ssh/id_rsa
+        Public key: ~/.ssh/id_rsa.pub
+    Press Enter to accept the default file location (~/.ssh/id_rsa).
+
+########Display the Public Key######
+
+cat .ssh/id_rsa.pub
+
+    Prints the public key so it can be manually copied to other nodes.
+
+####Add the Public Key to authorized_keys#########
+
+[vi .ssh/authorized_keys]
+
+    Opens the SSH authorized_keys file in vi editor.
+    Paste the public key (id_rsa.pub) into this file.
+    This allows passwordless SSH access.
+
+######Copy SSH Key to Other Nodes#######
+
+ssh-copy-id -f -i /etc/ceph/ceph.pub root@cephd2
+ssh-copy-id -f -i /etc/ceph/ceph.pub root@cephd3
+
+    Copies Ceph’s SSH public key to cephd2 and cephd3.
+    Options explained:
+        -f: Forces overwriting an existing key.
+        -i /etc/ceph/ceph.pub: Uses Ceph’s public SSH key.
+        root@cephd2: Specifies the remote node.
+
+########Adding Additional Nodes to Ceph (Using the Orchestrator)########
+
+Ceph Orchestrator (ceph orch) is used to manage hosts and deploy services.
+
+[sudo ceph orch host add GFBM2 10.121.223.22]
+[sudo ceph orch host add GFBM3 10.121.223.23]
+
+    Registers additional Ceph nodes in the cluster.
+    Syntax: ceph orch host add <hostname> <IP_address>
+    Example:
+        Adds node GFBM2 with IP 10.121.223.22.
+        Adds node GFBM3 with IP 10.121.223.23.
+    Why is this needed?
+        The new nodes can now be used for deploying Ceph services like OSD, MON, MGR, RGW.
+
+#######Set the Public Network for Ceph#########
+
+[sudo ceph config set mon public_network 10.138.230.0/23]
+
+    Defines the Ceph public network where nodes communicate.
+    Syntax:
+        sudo ceph config set mon public_network <CIDR>
+        Here, 10.138.230.0/23 is the public network.
+    Why is this needed?
+        Ensures that MON, OSD, and MGR services use the correct network.
+
+#####List Hosts in the Ceph Cluster######
+
+[ceph orch host ls]
+
+    Displays all hosts in the Ceph cluster.
+    Example output:
+
+    HOST   ADDR            STATUS  
+    GFBM1  10.121.223.21   available  
+    GFBM2  10.121.223.22   available  
+    GFBM3  10.121.223.23   available  
+
+    Useful for checking if all nodes are added properly.
+
+######Deploy MON Services on Specific Hosts######
+
+[sudo ceph orch apply mon "GFBM1,GFBM2,GFBM3"]
+
+    Deploys MON (Monitor) services on nodes GFBM1, GFBM2, and GFBM3.
+    Syntax: ceph orch apply mon "<node1,node2,node3>"
+    What is a MON?
+        MONs maintain the cluster state and quorum.
+        At least 3 MONs are recommended for high availability.   
+        
+#######View the Ceph OSD Tree##########
+
+[sudo ceph osd tree | column -t -s $'\t']
+
+    Displays the current OSD hierarchy in a structured format.
+    What does it show?
+        Lists all OSDs, their IDs, hosts, status (up/down), and weight.
+    Why use column -t -s $'\t'?
+        Ensures proper alignment for better readability.
+
+Example Output:
+
+ID  CLASS  WEIGHT   TYPE NAME       STATUS REWEIGHT PRI-AFF
+-1        10.91     root default                      
+-2        10.91         host GFBM1                    
+ 0   hdd   3.64          osd.0       up      1.00000 1.00000
+ 1   hdd   3.64          osd.1       up      1.00000 1.00000
+
+#####List Available Devices for OSD Deployment#########
+
+[ceph orch device ls]
+
+    Lists all storage devices across Ceph nodes that are available for OSDs.
+    Example Output:
+
+    HOST   PATH      TYPE   SIZE   AVAILABLE
+    GFBM1  /dev/sda  hdd    10.91T  Yes
+    cephd2 /dev/sdc  hdd    10.91T  Yes
+    cephd4 /dev/sdc  hdd    14.55T  Yes
+
+#######Automatically Add All Available Devices as OSDs##########
+
+ceph orch apply osd --all-available-devices
+
+    Tells Ceph to consume all available disks and configure them as OSDs.
+    Use case:
+        If you don’t know the device names, this command adds all unused storage devices to Ceph.
+    Risk:
+        If there are non-Ceph disks, they may be wiped! Ensure only OSD disks are present.
+
+#######Manually Add OSDs to Specific Hosts#######
+
+[sudo ceph orch daemon add osd GFBM1:/dev/sda --HDD --10.91(TiB)]
+
+    Manually creates an OSD on node GFBM1 using disk /dev/sda.
+    Options explained:
+        GFBM1:/dev/sda: Specifies the host and device to be used.
+        --HDD: Specifies that the device is an HDD.
+        --10.91(TiB): Indicates the disk size.
+
+Example for multiple hosts:
+
+sudo ceph orch daemon add osd cephd2:/dev/sdc  --HDD --10.91(TiB)
+sudo ceph orch daemon add osd cephd4:/dev/sdc  --HDD --14.55(TiB)
+
+    Adds OSDs:
+        On cephd2, using /dev/sdc (10.91 TiB).
+        On cephd4, using /dev/sdc (14.55 TiB).
+
+########Deploy OSDs Using Configuration Files##########
+
+Instead of specifying devices manually, we can use YAML configuration files.
+
+ceph orch apply osd -i osd_cephd1.yaml
+ceph orch apply osd -i osd_cephd2.yaml
+ceph orch apply osd -i osd_cephd4.yaml
+
+    Deploys OSDs using configuration files (osd_cephd1.yaml, etc.).
+    Example of a YAML file (osd_cephd1.yaml):
+
+    service_type: osd
+    service_id: osd_cephd1
+    placement:
+      host_pattern: "cephd1"
+    data_devices:
+      paths:
+        - /dev/sda
+
+    What does this do?
+        Creates an OSD service (osd_cephd1).
+        Deploys it on host cephd1.
+        Uses device /dev/sda.
+
+
+###what isthedifference between in adding of osd manually or by yaml file
+
+The difference between adding OSDs manually using ceph orch daemon add osd and using a YAML file (ceph orch apply osd -i <file>.yaml) lies in flexibility, automation, and scalability.
+1️⃣ Adding OSDs Manually (ceph orch daemon add osd <host>:<device>)
+
+sudo ceph orch daemon add osd GFBM1:/dev/sda --HDD --10.91(TiB)
+
+✅ Advantages:
+
+    Quick setup for adding a few OSDs.
+    Good for one-time operations or small clusters.
+
+❌ Disadvantages:
+
+    Not scalable for large deployments.
+    No consistency – you must repeat the command manually for every node.
+    More prone to human errors – forgetting a parameter can cause misconfigurations.
+
+2️⃣ Adding OSDs Using a YAML File (ceph orch apply osd -i osd_config.yaml)
+
+ceph orch apply osd -i osd_cephd1.yaml
+
+Example YAML (osd_cephd1.yaml)
+
+service_type: osd
+service_id: osd_cephd1
+placement:
+  host_pattern: "cephd1"
+data_devices:
+  paths:
+    - /dev/sda
+
+✅ Advantages:
+
+    Scalable – You can define multiple OSDs at once.
+    Easier to manage – YAML files can be version-controlled (e.g., Git).
+    Automation-friendly – Works well with Ansible or CI/CD pipelines.
+    Consistency – Ensures all nodes follow the same deployment pattern.
+    Better for large clusters – Simplifies bulk deployment.
+
+❌ Disadvantages:
+
+    Requires writing YAML files (but this is a minor issue).
+    Not as quick for a single OSD (extra file creation step).
+
+
+
+        
