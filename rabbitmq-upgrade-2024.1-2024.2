@@ -1,0 +1,107 @@
+---
+- name: RabbitMQ version check
+  vars:
+    service_name: "rabbitmq"
+    service: "{{ rabbitmq_services[service_name] }}"
+  block:
+
+    - name: Get container facts
+      become: true
+      kolla_container_facts:
+        action: get_containers
+        container_engine: "{{ kolla_container_engine }}"
+        name:
+          - "{{ service.container_name }}"
+      register: container_facts
+
+    - name: Check if RabbitMQ container exists
+      set_fact:
+        rabbitmq_container_exists: "{{ container_facts[service.container_name] is defined }}"
+
+    - name: Skip version check if container does not exist
+      debug:
+        msg: "RabbitMQ container '{{ service.container_name }}' not found. Skipping check."
+      when: not rabbitmq_container_exists
+
+    - block:
+
+        - name: Get current RabbitMQ version
+          become: true
+          command: "{{ kolla_container_engine }} exec {{ service.container_name }} rabbitmqctl --version"
+          register: rabbitmq_version_current
+          changed_when: false
+          failed_when: false
+
+        - name: Get new RabbitMQ version
+          become: true
+          vars:
+            rabbitmq_container: "{{ rabbitmq_services['rabbitmq'] }}"
+          kolla_container:
+            action: "start_container"
+            command: "rabbitmqctl --version"
+            common_options: "{{ docker_common_options }}"
+            container_engine: "{{ kolla_container_engine }}"
+            detach: false
+            environment:
+              KOLLA_CONFIG_STRATEGY: "{{ config_strategy }}"
+            image: "{{ rabbitmq_container.image }}"
+            name: "rabbitmq_version_check"
+            restart_policy: oneshot
+            volumes: "{{ rabbitmq_default_volumes + rabbitmq_extra_volumes }}"
+          register: rabbitmq_version_new
+          check_mode: false
+          failed_when: false
+
+        - name: Skip version check if version output is missing
+          debug:
+            msg: "Skipping RabbitMQ version check because version information is missing."
+          when:
+            - rabbitmq_version_current.stdout is not defined or rabbitmq_version_new.stdout is not defined
+
+        - block:
+
+            - name: Set version strings
+              set_fact:
+                current_version: "{{ rabbitmq_version_current.stdout | trim }}"
+                new_version: "{{ rabbitmq_version_new.stdout | trim }}"
+
+            - name: Set version major/minor numbers
+              set_fact:
+                current_version_major: "{{ current_version.split('.')[0] | int }}"
+                current_version_minor: "{{ current_version.split('.')[1] | int }}"
+                new_version_major: "{{ new_version.split('.')[0] | int }}"
+                new_version_minor: "{{ new_version.split('.')[1] | int }}"
+
+            - name: Set upgrade version
+              set_fact:
+                upgrade_version: "{{ '4.0' if current_version == '3.13' else current_version_major ~ '.' ~ ((current_version_minor | int) + 1) }}"
+
+            - name: Check if running RabbitMQ is at most one version behind
+              assert:
+                that:
+                  - (current_version_major == new_version_major and (new_version_minor | int - current_version_minor | int) <= 1)
+                  - (new_version | float == 4.0 and current_version | float == 3.13) or true
+                fail_msg: >
+                  You're trying to skip a RabbitMQ version.
+                  Please upgrade first to {{ upgrade_version }} using:
+                  `kolla-ansible rabbitmq-upgrade {{ upgrade_version }}`
+
+            - name: Check for RabbitMQ downgrade
+              assert:
+                that: current_version is version(new_version, 'le', version_type='semver')
+                fail_msg: >
+                  You are attempting to downgrade RabbitMQ from {{ current_version }} to {{ new_version }},
+                  which is not supported. Pin the RabbitMQ version or skip this tag.
+
+          when:
+            - rabbitmq_version_current is defined
+            - rabbitmq_version_current.stdout is defined
+            - rabbitmq_version_new is defined
+            - rabbitmq_version_new.stdout is defined
+
+      when: rabbitmq_container_exists
+
+  delegate_to: "{{ groups[role_rabbitmq_groups] | first }}"
+  run_once: true
+  tags: rabbitmq-version-check
+
