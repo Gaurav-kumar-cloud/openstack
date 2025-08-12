@@ -1,0 +1,46 @@
+##############Accessing Kubernetes Cluster Using a Local Configuration File#######
+#########install kubectl#################
+######Install kubectl binary with curl on Linux######
+curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+
+#######Install kubectl######
+sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+#######Test to ensure the version you installed is up-to-date:#####
+kubectl version --client
+
+#######Create a Cluster Configuration File/download config file from cluster#######
+vi test-cluster_config 
+
+######Paste the following content into the file (update file paths and IP address as needed):###  always focus on certificates should be in correct path
+  apiVersion: v1
+clusters:
+- cluster:
+    server: https://102.223.185.47:6443
+    certificate-authority: /home/ubuntu/Downloads/test-cluster_ca.pem  # optional but recommended
+  name: test-cluster
+contexts:
+- context:
+    cluster: test-cluster
+    user: test-cluster
+  name: test-cluster
+current-context: test-cluster
+kind: Config
+preferences: {}
+users:
+- name: test-cluster
+  user:
+    client-certificate: /home/ubuntu/Downloads/test-cluster_cert.pem
+    client-key: /home/ubuntu/Downloads/test-cluster_key.pem
+
+########Copy Configuration File##########
+2)cp test-cluster_config kubeconfig
+
+#######Set the KUBECONFIG Environment Variable############
+3)export KUBECONFIG="/home/ubuntu/Downloads/kubeconfig"
+
+########Verify Access to Cluster#########
+4)kubectl get nodes
+
+########Check all pods in all namespaces:########
+5)kubectl get pods -A
