@@ -1,0 +1,1303 @@
+##########Networking for openstack############
+
+1) ip Command
+The ip command is a powerful replacement for the older ifconfig, route, and arp commands. It's used for network interface configuration, routing, and more.
+
+Subcommands:
+    ip a or ip addr: Shows IP addresses and interface properties
+    ip r or ip route: Displays the routing table
+    ip link: Manages network interfaces at the link layer (Layer 2)
+    
+2)brctl (Bridge Control)
+Used for managing Ethernet bridges (network bridges that connect multiple Ethernet networks).
+
+Common usage:
+    brctl show: List all bridges
+    brctl addbr <name>: Create a new bridge
+    brctl addif <bridge> <interface>: Add interface to bridge 
+    
+3)netstat
+Displays network connections, routing tables, interface statistics, masquerade connections, and multicast memberships.
+
+Common options:
+    netstat -tulpn: Show listening TCP/UDP ports with processes
+    netstat -r: Display routing table (same as route -n)
+    netstat -i: Show network interfaces  
+    
+    
+4)ss (Socket Statistics)
+Modern replacement for netstat, faster and more detailed.
+
+Common usage:
+    ss -tulpn: Show listening ports (like netstat)
+    ss -s: Show summary statistics
+    ss -ta: Show all TCP sockets 
+    
+5)tcpdump
+Powerful command-line packet analyzer that captures and displays network traffic.
+
+Common usage:
+    tcpdump -i eth0: Capture on specific interface
+    tcpdump port 80: Capture HTTP traffic
+    tcpdump -n: Don't resolve hostnames (faster)
+    tcpdump -w file.pcap: Save to file for later analysis
+    
+######Physical Interfaces########
+1))eth0 (Traditional Ethernet Interface Naming)
+    What it is: The traditional naming scheme for Ethernet interfaces where "eth" stands for Ethernet and the number represents the interface index.
+    Behavior: Automatically assigned by the kernel in the order interfaces are detected.
+    Example: First Ethernet port would be eth0, second would be eth1, etc.
+    Current status: Mostly replaced by predictable naming schemes in modern systems.
+
+2)enp3s0 (Predictable Ethernet Interface Naming)
+    What it is: Modern, predictable naming scheme based on physical location:
+        en = Ethernet
+        p3 = PCI bus 3
+        s0 = slot 0
+        
+##Pci bus 3== 
+PCI Bus 3 refers to a specific channel or path in your system's Peripheral Component Interconnect (PCI) architecture — used to connect hardware devices like:
+    Network Interface Cards (NICs)
+    Graphics cards
+    Storage controllers
+    Other add-in cards
+    
+    ##Think of PCI like a Road System:
+      PCI buses are like roads inside your computer.
+      Each bus has slots (like parking spots) where devices can be connected.
+      Your system may have multiple PCI buses depending on motherboard design
+So, Bus 3 simply means it’s the 3rd PCI bus enumerated by your motherboard/chipset.
+
+   ##What Happens on PCI Bus 3?
+    It carries addressing, control, and data signals to/from the connected device (e.g., a network card).
+    Devices on PCI Bus 3 are independent of other buses (like Bus 0 or Bus 2), except for sharing the overall PCI controller.
+
+   ex-
+     You can see your PCI buses and devices with:
+       lspci | grep -i ethernet
+
+ouput:
+   03:00.0 Ethernet controller: Intel Corporation I210 Gigabit Network Connection
+Breakdown:
+    03: This is PCI Bus 3
+    00.0: Device and function numbers
+
+##PCI Address Structure:
+Field	                      Example	                           Meaning
+Domain	                     0000	                       Typically 0000 unless SR-IOV/etc.
+Bus	                      03	                        PCI Bus 3
+Device (Slot)	              00	                       Physical slot or function unit
+Function	              0	                              Device may expose multiple functions
+
+===Why it Matters
+    Used for hardware troubleshooting, passthrough (e.g. in KVM or OpenStack), or setting affinity.
+    Predictable naming like enp3s0 helps bind a specific NIC to a role (e.g. storage vs. public).
+
+
+#Advantages:
+    Names remain consistent regardless of boot order
+    Reflects physical hardware topology
+
+#Example: enp5s0 would be Ethernet at PCI bus 5, slot 0
+    Variations:
+        eno1: Onboard Ethernet (number indicates onboard index)
+        ens1: Ethernet connected via hotplug slot (like USB or Thunderbolt)
+
+3)wlan0 (Wireless Interface)
+    What it is: Standard naming for wireless interfaces where "wlan" stands for Wireless LAN.
+    Behavior: Similar to eth0 but for WiFi cards.
+    Example: First WiFi card would be wlan0, second would be wlan1.
+    Modern naming: Some systems now use names like wlx<MAC address> for predictability.
+
+##Example of physical interface configuration:
+# View physical interfaces
+ip link show
+
+# Bring up an interface
+sudo ip link set enp3s0 up
+
+# Assign an IP address
+sudo ip addr add 192.168.1.10/24 dev enp3s0 
+
+
+####Virtual Interfaces##########
+1) lo (Loopback Interface)
+    What it is: A virtual network interface that allows a system to communicate with itself.
+    IP Address: Always has 127.0.0.1 (IPv4) and ::1 (IPv6)
+    Purpose:
+        Testing network software without a physical network
+        Inter-process communication via network protocols
+        Services binding to localhost only
+
+    Example:
+    ping 127.0.0.1  # Tests loopback functionality
+
+2)tun/tap (VPN Interfaces)
+    What they are: Virtual interfaces used by VPN software:
+        tun (Network TUNnel): Layer 3, carries IP packets
+        tap (Network TAP): Layer 2, carries Ethernet frames
+
+#Common uses:
+        OpenVPN (creates tun0 or tap0)
+        WireGuard (creates wg0)
+        Other VPN solutions
+        
+#Example:
+# After starting OpenVPN, you might see:
+    ip addr show tun0
+
+3)veth (Virtual Ethernet)
+    What it is: Virtual Ethernet pairs used to connect network namespaces or containers.
+    Behavior: Always created in pairs - like a virtual network cable.
+
+    Common uses:
+        Docker/podman/LXC container networking
+        Network namespace isolation
+
+#Example:
+# Create a veth pair
+sudo ip link add veth0 type veth peer name veth1
+
+# Connect a container to host networking
+sudo ip link set veth1 netns mycontainer
+
+
+## Bonded Interfaces##########
+#What They Are
+    Definition: A logical interface that combines multiple physical interfaces for:
+        Redundancy: Failover if one interface goes down
+        Bandwidth aggregation: Increased throughput (in some modes)
+
+    Also known as: NIC teaming, link aggregation, port trunking
+
+##Bonding Modes
+  1)mode=0 (balance-rr): Round-robin packet distribution
+  #Description:
+    Sends packets sequentially through each NIC in the bond.
+    E.g., Packet 1 via eth0, Packet 2 via eth1, Packet 3 via eth0 again, etc.
+
+  #Pros:
+    Provides load balancing and fault tolerance.
+    Maximum throughput aggregation (if switch supports it).
+
+  #Cons:
+    Requires switch support (must allow bonding and not reorder packets).
+    May cause packet reordering, which can impact protocols like TCP.
+
+  #Use When:
+    You have a managed switch and want maximum performance.
+
+  2)mode=1 (active-backup): One active interface, others as backup
+  #Description:
+    Only one NIC is active; others are in standby.
+    If the active NIC fails, another takes over.
+
+  #Pros:
+    No special switch support required.
+    Provides fault tolerance.
+
+  #Cons:
+    No load balancing, only one interface is used at a time.
+
+  #Use When:
+    You want simple failover without modifying switch configs.
+
+  3)mode=4 (802.3ad): Dynamic link aggregation (LACP)
+  #Description:
+    Uses the IEEE 802.3ad Link Aggregation Control Protocol (LACP).
+    Dynamically aggregates links between host and switch.
+
+  #Pros:
+    True dynamic link aggregation.
+    Load balancing + redundancy.
+    Widely supported by managed switches.
+
+  #Cons:
+    Requires:
+        Switch support for LACP
+        Proper switch configuration
+
+  #Use When:
+    You have an enterprise-grade switch and want scalable bandwidth and reliability.
+
+  4)mode=5 (balance-tlb): Adaptive transmit load balancing
+  #Description:
+    Outgoing traffic is balanced across interfaces based on load.
+    Incoming traffic is received only by one interface.
+
+  #Pros:
+    No switch support required.
+    Uses ARP tricks to balance traffic.
+
+  #Cons:
+    Only transmit traffic is balanced.
+    Receive load remains on one interface.
+
+  #Use When:
+    You want transmit load balancing on simple/consumer-grade switches
+ 
+ 5)mode=6 (balance-alb): Adaptive load balancing (includes receive)
+  #Description:
+    Combines mode 5 (TLB) with Receive Load Balancing using ARP negotiation.
+    Both transmit and receive traffic are balanced without switch support.
+
+  #Pros:
+    True load balancing (TX + RX).
+    No switch config required.
+
+  #Cons:
+    More complex ARP behavior; may confuse very old devices.
+    Cannot be used with some virtual environments or advanced switching.
+
+  #Use When:
+    You want full load balancing with zero switch involvement.
+
+##Configuration Example
+
+# Install bonding driver (if needed)
+sudo modprobe bonding
+
+# Create bond interface
+sudo ip link add bond0 type bond mode=802.3ad
+
+# Add slave interfaces
+sudo ip link set eth0 master bond0
+sudo ip link set eth1 master bond0
+
+# Bring up the bond
+sudo ip link set bond0 up
+sudo ip addr add 192.168.1.100/24 dev bond0
+    
+##Verification
+# Check bond status
+cat /proc/net/bonding/bond0
+
+# Sample output:
+Bonding Mode: IEEE 802.3ad Dynamic link aggregation
+Slave Interface: eth0
+Slave Interface: eth1 
+
+
+####Bridges#############
+##Bridges (Layer 2)
+##What is a Bridge?
+A bridge is a network device that connects multiple network segments at the data link layer (Layer 2) of the OSI model. In Linux, a bridge behaves like a virtual network switch.
+Key Characteristics:
+    Operates at Layer 2 (MAC addresses)
+    Transparently forwards traffic between connected interfaces
+    Creates a single broadcast domain
+    Learns MAC addresses to make forwarding decisions
+
+#Common Use Cases:
+    Virtual Machine Networking:
+        Connect multiple VMs to the same virtual network
+        Example: KVM/QEMU VMs sharing a bridge with the host
+
+    Container Networking:
+        Docker/podman/LXC containers communicating via a bridge
+        Example: Docker's default docker0 bridge
+
+    Connecting Physical Networks:
+        Merging two physical networks into one logical network
+
+Example Setup:
+# Create a bridge named br0
+sudo ip link add name br0 type bridge
+
+# Add interfaces to the bridge
+sudo ip link set eth0 master br0
+sudo ip link set eth1 master br0
+
+# Bring up the bridge
+sudo ip link set br0 up
+
+# Assign IP address to the bridge
+sudo ip addr add 192.168.1.1/24 dev br0
+
+Verification:
+bash
+
+# Show bridge information
+bridge link show
+
+# Show MAC address table
+bridge fdb show
+
+##VLANs (Virtual LANs)
+#What is a VLAN?
+A VLAN is a method of creating independent logical networks within the same physical network infrastructure. VLANs operate at Layer 2 but provide segmentation.
+Key Characteristics:
+    Operates at Layer 2 with VLAN tags (IEEE 802.1Q)
+    Creates separate broadcast domains
+    Requires VLAN-aware equipment (trunk ports)
+    Uses VLAN IDs (1-4094) for identification
+
+Common Use Cases:
+    Network Segmentation:
+        Separate departments (Finance, HR, Engineering) on same physical switch
+        Example: VLAN 10 for Finance, VLAN 20 for HR
+        
+    Security Isolation:
+        Isolate IoT devices from main network
+        Example: VLAN 30 for smart home devices
+
+    Traffic Management:
+        Prioritize voice/video traffic (VLAN 100 for VoIP)
+
+##Example Setup:
+# Create VLAN 100 on eth0
+sudo ip link add link eth0 name eth0.100 type vlan id 100
+
+# Assign IP address to VLAN interface
+sudo ip addr add 192.168.100.1/24 dev eth0.100
+
+# Bring up the VLAN interface
+sudo ip link set eth0.100 up
+
+##Verification:
+# Show VLAN interfaces
+ip -d link show eth0.100
+
+# Show VLAN filtering on bridge (if used)
+bridge vlan show
+
+
+##Practical Scenarios
+--When to Use a Bridge:
+    --Virtualization Host:
+        You have 3 VMs that need to communicate with each other and the host
+        Solution: Create br0 bridge, connect all VMs and host to it
+
+    --Home Lab:
+        You have a Raspberry Pi and two servers that should be on same network
+        Solution: Bridge the Ethernet ports together
+
+--When to Use VLANs:
+    --Office Network:
+        Need separate networks for guests, employees, and servers
+        Solution: VLAN 10 (Guests), VLAN 20 (Employees), VLAN 30 (Servers)
+
+    --Service Provider:
+        Hosting multiple customers on same infrastructure
+        Solution: Different VLAN per customer
+      
+
+###What is Routing?###
+Routing is the process of determining the optimal path for network packets to travel from a source to a destination across interconnected networks.
+Key Functions of Routing:
+    Determines the best path for packet forwarding.
+    Uses routing tables to store network paths.
+    Supports static (manual) and dynamic (automatic) routing.
+    Relies on gateways (routers) to forward traffic between networks.   
+        
+        
+##Routing Table##
+The routing table is a set of rules stored in the kernel that determines where packets should be sent based on their destination IP.   
+
+--Viewing the Routing Table
+ip route show
+# or
+route -n
+
+--Example Output:
+default via 192.168.1.1 dev eth0  
+192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.10  
+10.0.0.0/24 via 192.168.1.2 dev eth0
+
+Components of a Routing Table Entry
+Field	                           Description
+Destination	              Network/IP range (e.g., 192.168.1.0/24)
+Gateway (via)	              Next-hop router IP (e.g., 192.168.1.1)
+Interface (dev)	              Network interface (e.g., eth0)
+Scope	                     link (local network), global (internet)
+Metric	                     Priority (lower = preferred)
+
+
+##Types of Routes##
+(A) Directly Connected Routes
+
+    Automatically added when an interface gets an IP.
+    Used for local network communication.
+
+Example:
+192.168.1.0/24 dev eth0 proto kernel scope link src 192.168.1.10
+    Meaning: All traffic for 192.168.1.0/24 goes through eth0.
+    
+(B) Default Route (Gateway of Last Resort)
+
+    Handles traffic not matching any other route.
+    Typically points to the ISP router or corporate gateway.
+
+--Example:
+default via 192.168.1.1 dev eth0
+    Meaning: Any traffic not matching other rules goes to 192.168.1.1 via eth0.
+
+(C) Static Routes
+
+    Manually configured by an admin.
+    Used for:
+        Connecting to remote subnets.
+        VPN routes.
+        Multi-homed networks.
+
+--Example:
+ip route add 10.0.0.0/24 via 192.168.1.2 dev eth0
+    Meaning: Traffic for 10.0.0.0/24 goes through 192.168.1.2.
+
+(D) Dynamic Routes
+
+    Automatically learned via routing protocols:
+        RIP (Routing Information Protocol)
+        OSPF (Open Shortest Path First)
+        BGP (Border Gateway Protocol)
+    Used in large networks (data centers, ISPs).
+    
+    
+##What is a Gateway?
+A gateway is a router that forwards traffic between different networks.
+
+##How a Gateway Works
+    Host checks routing table for destination.
+    If no direct route, traffic goes to the default gateway.
+    The gateway forwards the packet to the next hop.
+
+Example:
+    Your PC (192.168.1.10) → Gateway (192.168.1.1) → Internet
+    
+##How Routing Tables Are Created
+(A) Kernel Auto-Generated Routes
+    When an interface (eth0, wlan0) gets an IP, the kernel adds:
+        A local route (for the interface itself).
+        A subnet route (for the LAN).
+
+(B) Manually Added Static Routes
+ip route add 172.16.0.0/16 via 192.168.1.100
+
+    Persist routes in /etc/network/interfaces (Debian) or /etc/sysconfig/network-scripts/ (RHEL).
+
+(C) DHCP-Assigned Default Route
+    If using DHCP, the gateway is automatically added:
+    ip route add default via 192.168.1.1 dev eth0
+
+(D) Dynamic Routing Protocols
+    OSPF, BGP, RIP automatically update the routing table.
+    
+    
+##Practical Examples
+Example 1: Adding a Static Route
+
+ip route add 10.0.0.0/24 via 192.168.1.2 dev eth0
+
+    Meaning: Send all 10.0.0.0/24 traffic to 192.168.1.2 via eth0.
+
+Example 2: Removing a Route
+ip route del 10.0.0.0/24
+
+Example 3: Changing Default Gateway
+ip route del default
+ip route add default via 192.168.1.254 dev eth0
+
+Example 4: Policy-Based Routing
+# Route traffic from 192.168.1.50 via a different gateway
+ip rule add from 192.168.1.50 lookup 100
+ip route add default via 10.0.0.1 dev eth1 table 100
+    
+    
+##Breakdown of Each Term:
+Term	                                                      Meaning
+ip	                                 The Linux command-line utility to show/manipulate routing, devices, policy routing, and tunnels.
+route	                                 Subcommand under ip used to manipulate the routing table.
+add	                                 Specifies the action: here, it means "add a new route".
+10.0.0.0/24	                         Destination network: This is the network you want to reach. /24 means subnet mask 255.255.255.0 (i.e., all IPs from 10.0.0.0 to 10.0.0.255).
+via 192.168.1.2	                         Next hop/gateway: This is the IP address of the router that will be used to reach the 10.0.0.0/24 network.
+dev eth0	                         Device/interface: Specifies the network interface (e.g., Ethernet interface) to use for reaching the next hop 192.168.1.2.
+
+##cidr
+    CIDR (Classless Inter-Domain Routing): A compact representation of IP ranges (e.g., 192.168.1.0/24).
+       /24 means the first 24 bits are the network portion (subnet mask 255.255.255.0).
+       Used in routing tables to define destination networks efficiently.
+       
+##Policy based routing(ip rule)
+     Routes traffic based on conditions (source IP, protocol, port).
+       Use Case:
+        Send VPN traffic via a different gateway.
+        Prioritize VoIP traffic.    
+        
+
+##What is a NAT Gateway?
+  --Allows private subnets to access the internet while blocking inbound traffic.
+    Routing:
+        Private instance → NAT Gateway → Internet Gateway.  
+        
+  --A NAT (Network Address Translation) Gateway is a networking component that allows instances in a private subnet to access the internet (or other external networks) without exposing them to inbound traffic.
+Key Characteristics
+    Outbound-Only: Private instances can initiate connections to the internet, but external systems cannot initiate connections back.
+    IP Masquerading: Uses a public IP (or Elastic IP) to represent all private instances.
+    Stateful: Tracks connections to route responses back correctly.
+    Used in Cloud (AWS, Azure, GCP): Often a managed service (e.g., AWS NAT Gateway).   
+    
+##How NAT Gateway Works
+Step-by-Step Flow
+--Private Instance Sends a Request
+        A VM in a private subnet (e.g., 10.0.1.5) tries to access google.com.
+        The packet has:
+    Source IP: 10.0.1.5  
+    Destination IP: 172.217.0.0 (Google)
+
+--Routing to NAT Gateway
+    The private subnet’s route table sends traffic to the NAT Gateway:
+    0.0.0.0/0 → nat-12345678 (NAT Gateway)
+    The packet is forwarded to the NAT Gateway.
+
+--NAT Translation (IP Masquerading)
+    The NAT Gateway replaces the private source IP (10.0.1.5) with its public IP (203.0.113.10):
+
+Source IP: 203.0.113.10 (NAT Gateway’s public IP)  
+Destination IP: 172.217.0.0 (Google)
+
+    It keeps a connection tracking table to remember:
+         10.0.1.5:54321 → 203.0.113.10:12345 → 172.217.0.0:80
+
+--Internet Gateway Handles Outbound Traffic
+    The NAT Gateway forwards the packet to the Internet Gateway (IGW).
+    The IGW sends it to the public internet.
+
+--Response Comes Back
+    Google replies to 203.0.113.10:12345.
+    The NAT Gateway checks its connection table and reverses the translation:
+    Destination IP: 10.0.1.5 (original private instance)
+
+--Private Instance Receives Response
+    The response is routed back to 10.0.1.5 via the private subnet. 
+    
+##Why Use a NAT Gateway?
+Use Cases
+    Private Subnets in Cloud (AWS VPC, Azure VNet, GCP VPC)
+        Allows databases, internal services, and Kubernetes nodes to download updates without public IPs.
+
+#Example:
+     A private EC2 instance needs to yum update but shouldn’t be exposed to the internet.
+
+#Security
+     Blocks unsolicited inbound traffic (no open ports from the internet).
+
+#Cost-Efficiency
+     Avoids assigning public IPs to every instance.
+
+#Without NAT Gateway
+     Private instances cannot reach the internet (unless using a public IP, which is insecure).
+        
+#####iptables (Layer 3/4 Firewall & NAT)######
+    Purpose: Filters, modifies, or redirects packets (firewall rules, NAT, port forwarding).
+
+###How It Works
+    Packet Processing Chain
+    iptables uses chains to process packets:
+        INPUT: Handles incoming packets (destined for the local system).
+        OUTPUT: Handles outgoing packets (created by the local system).
+        FORWARD: Handles routed packets (passing through the system).
+        PREROUTING (NAT): Alters packets before routing.
+        POSTROUTING (NAT): Alters packets after routing.
+
+    Rule Matching
+    Each chain contains rules that match packets based on:
+        Source/Destination IP (-s 192.168.1.10)
+        Protocol (-p tcp)
+        Port (--dport 80)
+        Connection State (-m state --state ESTABLISHED)
+
+    Actions (Targets)
+        ACCEPT: Allow the packet.
+        DROP: Silently discard.
+        REJECT: Discard + send error (e.g., ICMP port unreachable).
+        MASQUERADE: NAT (hide private IPs behind a public IP).
+
+#Example Workflow
+    A web request (TCP port 80) arrives at your Linux server.
+    iptables checks the INPUT chain:
+
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+
+Note: If the rule matches, the packet is allowed; otherwise, it’s dropped.        
+        
+##When They Work Together
+   --Packet Arrives
+        First, ip route decides where it goes (routing table lookup).
+        Then, iptables filters it (FORWARD chain for routed packets).
+
+    NAT Example (Masquerade)
+    # Enable IP forwarding
+    echo 1 > /proc/sys/net/ipv4/ip_forward
+
+    # NAT traffic going out via eth0
+    iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+        ip route ensures packets reach the gateway.
+        iptables rewrites the source IP (NAT).
+
+Summary
+    ip route = GPS for packets (chooses the path).
+    iptables = Traffic cop (allows/denies/modifies packets).
+    Together: They enable complex networking (routers, firewalls, VPNs).      
+    
+##Key Components of iptables
+Different types of rule sets for specific purposes:
+Table	                                                             Purpose
+filter	                                             Default table for packet filtering (ACCEPT/DROP/REJECT).
+nat	                                             Network Address Translation (SNAT, DNAT, MASQUERADE).
+mangle	                                             Advanced packet modification (TTL, TOS, MARK).
+raw	                                             Bypass connection tracking (used for NOTRACK).
+security	                                     Mandatory Access Control (MAC) rules (SELinux integration).    
+    
+## Rules
+Each chain contains rules that match packets and define actions (-j TARGET):
+Target	                                                       Effect
+ACCEPT	                                               Allows the packet.
+DROP	                                         Silently discards the packet (no response).
+REJECT                                   	 Discards the packet + sends an error (e.g., ICMP port unreachable).
+LOG	                                         Logs the packet (/var/log/syslog).
+SNAT	                                         Rewrites source IP (for outbound NAT).
+DNAT	                                         Rewrites destination IP (for port forwarding).
+MASQUERADE	                                 Dynamic SNAT for routers with dynamic IPs (e.g., home gateways).   
+
+##How iptables Processes Traffic
+Packet Flow Through iptables
+Incoming Packet → PREROUTING (nat/mangle) → Routing Decision → FORWARD (filter) → POSTROUTING (nat/mangle)
+                      ↓
+               (If for localhost)
+                      ↓
+                  INPUT (filter) → Local Process → OUTPUT (filter) → POSTROUTING (nat/mangle)
+                  
+##Example: SSH Access
+    A remote client sends an SSH packet (TCP port 22) to the server.
+    PREROUTING (nat/mangle): Checks if DNAT is needed (e.g., port forwarding).
+    Routing Decision: Kernel checks if the packet is for the local system.
+    INPUT (filter): Applies firewall rules:
+    bash
+
+iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+
+If allowed, the packet reaches the SSH daemon. 
+
+
+####nftables##############
+Modern replacement (faster, unified syntax, replaces iptables/ip6tables)
+
+#How nftables Works
+    Unified Syntax:
+        Replaces iptables, ip6tables, arptables, and ebtables.
+        Uses tables → chains → rules but with simpler syntax.
+
+    Performance Benefits:
+        Fewer kernel hooks → faster processing.
+        Supports maps (key-value pairs for efficient rule matching).
+
+#Key nftables Commands
+# Create a table
+nft add table ip filter
+
+# Add a chain
+nft add chain ip filter INPUT { type filter hook input priority 0 \; }
+
+# Allow SSH (port 22)
+nft add rule ip filter INPUT tcp dport 22 accept
+
+# Block an IP
+nft add rule ip filter INPUT ip saddr 192.168.1.100 drop
+
+Why Use nftables?
+    Simpler syntax (easier to manage complex rules).
+    Better performance (lower CPU usage under heavy load).
+    Example Use Case:
+       -Rate-limiting brute-force SSH attempts:
+
+        nft add set ip filter ssh_blacklist { type ipv4_addr \; timeout 5m \; }
+        nft add rule ip filter INPUT tcp dport 22 \
+            meter ssh_bruteforce { ip saddr limit rate 5/minute } \
+            add @ssh_blacklist { ip saddr } \
+            drop
+
+##Key Differences: iptables vs nftables
+
+Feature	                           iptables	                                      nftables
+Syntax	                   Verbose (-A INPUT -p tcp...)	                         Clean (input tcp dport 22)
+Performance	               Slower (legacy)	                                 Faster (modern kernel integration)
+IPv4/IPv6	             Separate commands (iptables/ip6tables)	                Unified handling
+Dynamic Updates	               Requires full rule reload	                    Atomic rule updates
+Stateful Tracking	          Supported (-m state)	                                Built-in
+
+#Practical Firewall Examples
+-Example 1: Basic Web Server Protection
+-Goal: Allow HTTP/HTTPS, block everything else.
+#iptables:
+
+iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+iptables -A INPUT -j DROP
+
+#nftables:
+
+nft add rule ip filter INPUT tcp dport 80 accept
+nft add rule ip filter INPUT tcp dport 443 accept
+nft add rule ip filter INPUT drop
+
+##When to Use Which Firewall?
+    Use iptables if:
+        Working on older systems (RHEL 7, Ubuntu 18.04).
+        Need compatibility with legacy scripts.
+
+    Use nftables if:
+        On modern Linux (RHEL 8+, Ubuntu 20.04+).
+        Want better performance and simpler syntax.
+
+#Troubleshooting:
+Command	                            Purpose
+iptables -L -v -n	       List all iptables rules
+nft list ruleset	       Show nftables configuration
+conntrack -L	               View active connections (NAT tracking)
+
+
+########Network Interfaces##########
+1. What is a Network Interface?
+A network interface is a software or hardware component that connects a device to a network. It enables communication between:
+    Devices on a LAN (Local Area Network)
+    The internet
+    Virtual machines/containers             
+    
+##How Network Interfaces Work
+--  Layer 2 (MAC Address)
+        Uses MAC addresses (e.g., 00:1a:2b:3c:4d:5e) for local network communication.
+        Managed by ip link commands.
+
+--  Layer 3 (IP Address)
+        Uses IP addresses (e.g., 192.168.1.10) for routing.
+        Managed by ip addr commands.
+
+--  Packet Flow
+        A packet arrives at eth0 → Kernel checks routing table → Sent to the correct interface.  
+        
+##Why Are Network Interfaces Required?
+    Communication: Enables devices to send/receive data.
+    Routing: Determines how packets travel between networks.
+    Virtualization: Connects VMs/containers to host networks.
+    Security: Isolates traffic (VLANs, VPNs).
+    
+    
+######DNS (Domain Name System)###########
+#What is DNS?
+DNS translates human-readable domain names (e.g., google.com) into machine-readable IP addresses (e.g., 142.250.190.46).
+
+--How DNS Works
+    Query Flow:
+        Your PC → Local DNS Cache → ISP’s DNS Server → Root Servers → TLD (.com) → Authoritative DNS (Google’s DNS) → Returns IP.
+    Record Types:
+    Record	                                                         Purpose
+    A	                                                   IPv4 address (example.com → 192.168.1.1)
+    AAAA	                                           IPv6 address (example.com → 2606:4700:4700::1111)
+    CNAME	                                           Alias (www.example.com → example.com)
+    MX	                                                   Mail server (example.com → mail.example.com)
+    NS	                                                   Nameserver for the domain   
+    
+##DNS Configuration in Linux
+(A) /etc/resolv.conf
+Defines DNS servers:
+nameserver 8.8.8.8       # Google DNS
+nameserver 1.1.1.1       # Cloudflare DNS
+
+(B) /etc/hosts
+Local hostname-to-IP mappings (bypasses DNS):
+
+127.0.0.1   localhost
+192.168.1.5 myserver
+
+(C) /etc/nsswitch.conf
+Controls lookup order (hosts → DNS):
+hosts: files dns
+    files = /etc/hosts
+    dns = DNS servers
+
+##DNS Tools
+Command	                                     Purpose
+dig google.com 	                       Detailed DNS lookup
+nslookup google.com	                  Basic DNS query
+host google.com	                       Simplified DNS lookup
+systemd-resolve --status	       Show DNS config (systemd)  
+
+
+##Why DNS is Required
+    Human-Friendly: Easier to remember google.com than 142.250.190.46.
+    Load Balancing: Multiple IPs for a domain (e.g., CDNs).
+    Failover: Redirects if a server is down.
+    Security: Blocks malicious domains (DNS filtering).   
+    
+
+#####OSI Model vs TCP/IP Model#######
+OSI Model (7 Layers)
+Layer	Name	                      Function	                                     Example Protocols/Devices
+7	Application	          User interfaces & apps	                                HTTP, FTP, DNS, SMTP
+6	Presentation	          Data translation, encryption	                                SSL/TLS, JPEG, MPEG
+5	Session	                  Manages connections	                                         NetBIOS, RPC
+4	Transport	          End-to-end communication	                               TCP (reliable), UDP (fast)
+3	Network	                  Logical addressing & routing	                                IP, ICMP, routers
+2	Data Link 	          Physical addressing (MAC)	                                 Ethernet, switches, MAC
+1	Physical	          Raw bit transmission	                                          Fiber, cables, hubs
+
+Note : Why Use OSI?
+    Standardizes network communication.
+    Troubleshooting by layer (e.g., "Is this a Layer 3 or Layer 4 issue?").
+
+##TCP/IP Model (4 Layers)
+
+Layer	          Equivalent OSI Layers	                         Key Protocols
+Application	       5-7	                                      HTTP, FTP, DNS
+Transport	         4 	                                      TCP, UDP
+Internet	         3	                                      IP, ICMP
+Network Access	        1-2	                                   Ethernet, Wi-Fi
+
+Note : Why Use TCP/IP?
+    Simpler, real-world implementation (used in the internet).
+
+## IP Addressing, Subnetting & CIDR
+##IP Addressing (IPv4)
+    Format: 192.168.1.10 (32-bit, 4 octets).
+    Public vs Private IPs:
+        Public: Globally routable (e.g., 8.8.8.8).
+        Private: Reserved for LANs (10.0.0.0/8, 192.168.0.0/16).
+
+##Subnetting
+    Divides a network into smaller sub-networks.
+    Example: Split 192.168.1.0/24 into:
+        192.168.1.0/26 (64 hosts)
+        192.168.1.64/26 (64 hosts)
+        
+
+####DHCP (Dynamic Host Configuration Protocol)#####
+##What is DHCP?
+DHCP is a network protocol that automatically assigns IP addresses and network configuration (subnet mask, gateway, DNS) to devices on a network.
+
+##How DHCP Works (DORA Process)
+  1) Discover
+        A device (e.g., laptop) boots up and sends a DHCP Discover broadcast (0.0.0.0:68 → 255.255.255.255:67).
+        "Hey, is there a DHCP server here?"
+
+  2) Offer
+        The DHCP server responds with a DHCP Offer (proposed IP, lease time).
+        "Here’s an IP (192.168.1.100) you can use for 24 hours."
+
+  3) Request
+        The client sends a DHCP Request to confirm the offer.
+        "I’ll take 192.168.1.100!"
+
+  4) Acknowledge
+        The server finalizes with DHCP Ack (acknowledgment).
+        "Confirmed! Your IP is 192.168.1.100."
+
+##Why Use DHCP?
+    Automation: No manual IP assignment.
+    Efficiency: Reuses IPs when devices disconnect.
+    Centralized Management: Change DNS/gateway in one place.
+
+#Example (Home Network)
+    Router acts as DHCP server.
+    Devices (phones, laptops) get IPs like 192.168.1.100-192.168.1.200.
+
+--DHCP Commands (Linux)
+# Check DHCP lease (Linux)
+cat /var/lib/dhcp/dhclient.leases
+
+# Release/renew IP (Windows)
+ipconfig /release
+ipconfig /renew
+
+      
+#####VLAN (Virtual Local Area Network)############
+##What is a VLAN?
+A VLAN logically segments a physical network into multiple isolated broadcast domains (like separate mini-networks).
+
+##How VLANs Work
+  # Tagging:
+        Switches add a VLAN tag (802.1Q) to frames (e.g., VLAN 10 for HR, VLAN 20 for Engineering).
+        Access Port: Untagged traffic (e.g., VLAN 10 only).
+        Trunk Port: Carries multiple VLANs (tagged).
+
+  # Routing Between VLANs:
+        A Layer 3 switch or router routes traffic between VLANs.
+
+#Why Use VLANs?
+    Security: Isolate departments (e.g., Finance VLAN ≠ Guest VLAN).
+    Performance: Reduce broadcast traffic.
+    Flexibility: Physically separate devices act like they’re on the same LAN.
+
+#Example (Office Network)
+VLAN ID	Purpose	IP Range
+10	HR	192.168.10.0/24
+20	Engineering	192.168.20.0/24
+30	Guests	192.168.30.0/24
+
+--VLAN Commands (Linux)
+# Create VLAN 100 on eth0
+ip link add link eth0 name eth0.100 type vlan id 100
+
+# Assign IP
+ip addr add 192.168.100.1/24 dev eth0.100
+
+# Bring up
+ip link set eth0.100 up
+
+
+#####VPN (Virtual Private Network)#########
+##What is a VPN?
+A VPN creates an encrypted tunnel over the internet to securely connect remote users/sites to a private network.
+
+#How VPNs Work
+  # Tunnel Establishment:
+        Client connects to VPN server (e.g., OpenVPN, WireGuard).
+        Authenticates (username/password, certificates).
+
+  # Encryption:
+        Traffic is encrypted (AES-256 for OpenVPN, ChaCha20 for WireGuard).
+
+  # Routing:
+        VPN server assigns an internal IP (e.g., 10.8.0.2).
+        All traffic routes through the tunnel.
+
+#Types of VPNs
+
+Type	                     Use Case	                                          Example Protocols
+Remote Access	       Employees access company LAN	                            OpenVPN, WireGuard
+Site-to-Site	       Connect two office networks	                            IPsec, GRE
+SSL VPN	               Web-based access	                                            OpenVPN (TCP 443)
+
+#Why Use VPNs?
+    Security: Encrypts traffic on public Wi-Fi.
+    Privacy: Hides IP from ISPs.
+    Remote Work: Access internal resources (files, databases).
+
+#Example (WireGuard VPN)
+    Server Config (/etc/wireguard/wg0.conf):
+[Interface]
+PrivateKey = <server_private_key>
+Address = 10.8.0.1/24
+ListenPort = 51820
+
+[Peer]
+PublicKey = <client_public_key>
+AllowedIPs = 10.8.0.2/32
+
+#Client Connects:
+    sudo wg-quick up wg0
+
+##Real-World Use Cases
+    DHCP:
+        Home Wi-Fi (no manual IP setup).
+        Corporate networks (1000+ devices).
+
+    VLAN:
+        University network (dorms vs admin traffic).
+        Cloud providers (AWS/Azure tenant isolation).
+
+    VPN:
+        Accessing company files from home (OpenVPN).
+        Bypassing geo-blocks (WireGuard to another country).
+ 
+ 
+###MTU (Maximum Transmission Unit) & Its Impact####
+##What is MTU?
+MTU is the largest size (in bytes) of a packet that can be transmitted over a network interface without fragmentation.
+    Standard Ethernet MTU: 1500 bytes
+    Jumbo Frames: Up to 9000 bytes (used in data centers)
+    
+#How MTU Impacts Routing/Packet Delivery
+  --Fragmentation:
+        If a packet > MTU, it gets split into smaller fragments.
+        Example: A 3000-byte packet on a 1500-byte MTU link becomes 2 packets (1500 + 1500).
+
+  --Blackhole Routing:
+        If a router drops packets exceeding MTU without notifying the sender, connectivity breaks silently.
+        Fix: Enable Path MTU Discovery (PMTUD) (ping -M do -s 1472 example.com tests MTU).
+
+  --Performance Issues:
+        Fragmentation increases CPU load.
+        VPNs/overlays (VXLAN, GRE) reduce effective MTU due to encapsulation overhead.
+
+#Example (VPN Impact)
+    Original packet: 1500 bytes
+    VPN overhead (IPsec): 100 bytes
+    Effective MTU: 1400 bytes
+    → Packets >1400 bytes get fragmented.
+
+#Use Cases
+    Data Centers: Jumbo frames (9000 MTU) for high-throughput storage (iSCSI).
+    VPNs: Adjust MTU to avoid fragmentation (ifconfig eth0 mtu 1400).
+    
+    
+###ECMP (Equal-Cost Multi-Path) Routing####
+#What is ECMP?
+ECMP distributes traffic across multiple paths with the same routing cost (metric).
+
+#How ECMP Works
+  --Route Calculation:
+        Routing protocols (OSPF, BGP) identify multiple paths to a destination with equal cost.
+
+  --Load Balancing:
+        Packets are distributed using:
+            Per-flow: Hash of (src IP, dst IP, src port, dst port).
+            Per-packet: Round-robin (rare, causes reordering).
+
+  --Failover:
+        If one path fails, traffic shifts to remaining paths.
+
+#Example (Data Center Fabric)
+    Spine-Leaf Topology:
+        Traffic from Server A to Server B can take multiple spine paths.
+        ECMP ensures bandwidth is fully utilized.
+
+#Use Cases
+    Cloud Networks: AWS/GCP use ECMP for high availability.
+    Kubernetes: kube-proxy ECMP for service load balancing.
+
+#Linux ECMP Configuration
+ip route add default scope global nexthop via 192.168.1.1 dev eth0 weight 1 \
+                                  nexthop via 192.168.2.1 dev eth1 weight 1    
+                                  
+                                  
+####Same Metric & Prefix Routes##
+#What Happens?
+When two routes have the same metric and prefix, the behavior depends on the system:
+
+  --Linux:
+        Uses ECMP (traffic is load-balanced).
+        Example:
+        ip route add 10.0.0.0/24 via 192.168.1.1 metric 100
+        ip route add 10.0.0.0/24 via 192.168.2.1 metric 100  # ECMP kicks in
+
+  --Cisco IOS:
+        Default: Most specific route wins.
+        With maximum-paths 2, enables ECMP.
+
+  --Tiebreaker:
+        Some systems use administrative distance or route age.
+
+#Use Case (Backup Links)
+    Two ISPs with same cost:
+        ECMP shares traffic, but if one fails, the other takes over.
+
+
+
+###Source-Based Routing#######
+#What is Source-Based Routing?
+Routes traffic based on the source IP (not just destination).
+
+How It Works
+  --Policy Routing:
+        Uses ip rule to select routing tables based on source IP.
+
+        Example:
+        ip rule add from 192.168.1.100 lookup 100
+        ip route add default via 10.0.0.1 dev eth0 table 100
+
+  --Workflow:
+        Packet from 192.168.1.100 → table 100 → uses its default route.
+
+#Example (Multi-WAN Router)
+    Policy 1: 192.168.1.0/24 → ISP1 (table 10).
+    Policy 2: 192.168.2.0/24 → ISP2 (table 20).
+
+#Use Cases
+    Traffic Engineering: Send VoIP traffic via a low-latency path.
+    Multi-Tenancy: Isolate tenant traffic to different gateways.
+                                  
+                                  
+                                  
+###protocols######
+#Layer 2 Protocols (Data Link Layer)
+1. Ethernet (IEEE 802.3)
+    Purpose: Defines wired LAN (Local Area Network) communication, including frame format, MAC addressing, and CSMA/CD (for collision detection in half-duplex).
+    Working:
+        Devices communicate using MAC addresses (e.g., 00:1A:2B:3C:4D:5E).
+        Frames contain source/destination MAC, payload (data), and CRC for error checking.
+        Switches forward frames based on MAC tables.
+
+  --Use Cases:
+        Wired office networks, home networks, data centers.
+
+    Example: A PC sending data to a printer on the same LAN via a switch.
+
+2. VLAN (IEEE 802.1Q)
+    Purpose: Segments a physical network into multiple logical networks for security/performance.
+    Working:
+        Adds a 4-byte VLAN tag to Ethernet frames to indicate VLAN membership.
+        Switches restrict traffic between VLANs (requires a router for inter-VLAN communication).
+
+  --Use Cases:
+        Separating departments (e.g., Finance VLAN vs. HR VLAN).
+        Isolating IoT devices from main networks.
+
+    Example: A university using VLANs to separate student and faculty traffic on the same physical switch.
+
+3. ARP (Address Resolution Protocol)
+    Purpose: Maps IP addresses to MAC addresses.
+    Working:
+        A device broadcasts an ARP request (e.g., "Who has 192.168.1.1?").
+        The target device replies with its MAC address.
+        Results are cached in an ARP table.
+
+  --Use Cases:
+        Essential for any IPv4 communication on LANs.
+        
+    Example: Your laptop uses ARP to find the MAC address of the router before sending internet traffic.
+
+##Layer 3 Protocols (Network Layer)
+1. IP (Internet Protocol)
+    Purpose: Routes packets across networks using logical addressing (IPv4/IPv6).
+    Working:
+        IPv4 uses 32-bit addresses (e.g., 192.168.1.1); IPv6 uses 128-bit.
+        Fragments packets if MTU is exceeded.
+        Stateless (no tracking of packet relationships).
+
+  --Use Cases:
+        All internet communication (web, email, video streaming).
+
+    Example: Your phone sends an IP packet to a YouTube server via Wi-Fi.
+
+2. ICMP (Internet Control Message Protocol)
+    Purpose: Reports errors and diagnostics (e.g., ping, traceroute).
+    Working:
+        Encapsulated in IP packets (protocol number 1).
+        Messages include "Echo Request/Reply" (ping) or "Destination Unreachable."
+
+  --Use Cases:
+        Network troubleshooting (e.g., ping 8.8.8.8).
+        Path MTU discovery.
+        
+    Example: A sysadmin uses traceroute to find network bottlenecks.
+
+3. OSPF (Open Shortest Path First)
+    Purpose: Dynamic routing protocol for intra-AS (Autonomous System) networks.
+    Working:
+        Uses Dijkstra’s algorithm to calculate the shortest path.
+        Routers exchange Link-State Advertisements (LSAs) to build topology maps.
+
+  --Use Cases:
+        Enterprise/campus networks.
+        ISP backbone routing.
+
+    Example: A corporate network with 10 routers uses OSPF to adapt to link failures.
+
+4. BGP (Border Gateway Protocol)
+    Purpose: Routes traffic between ASes (e.g., ISPs, large orgs).
+    Working:
+        Path-vector protocol; uses TCP port 179.
+        Exchanges routes as "AS Path" lists (e.g., "Route to X is AS1 → AS2 → AS3").
+        Policies override shortest-path (e.g., preferring cheaper routes).
+
+  --Use Cases:
+        Internet backbone routing.
+        Multi-homed enterprises.
+
+    Example: Google uses BGP to announce its IP ranges (8.8.8.0/24) to the world.
+
+#Layer 4 Protocols (Transport Layer)
+1. TCP (Transmission Control Protocol)
+    Purpose: Reliable, connection-oriented delivery.
+    Working:
+        3-way handshake (SYN, SYN-ACK, ACK).
+        Sequencing/acknowledgments for error recovery.
+        Flow control (sliding window) and congestion control.
+
+##TCP 3-Way Handshake Explained (SYN, SYN-ACK, ACK):
+The 3-way handshake is the process TCP uses to establish a reliable connection between a client and a server before data transfer begins. It ensures both devices are ready to communicate and synchronize sequence numbers for proper data ordering.
+
+#Step-by-Step Breakdown
+   # SYN (Synchronize)
+        Sender: Client
+        Purpose: Initiates the connection and sends a random sequence number (ISN).
+
+        Example:
+            Client sends: SYN=1, Seq=1000 (SYN flag set, initial sequence number = 1000).
+
+   # SYN-ACK (Synchronize-Acknowledge)
+        Sender: Server
+        Purpose:
+            Acknowledges the client’s SYN (ACK = client’s ISN + 1).
+            Sends its own SYN with a new sequence number (ISN).
+
+        Example:
+            Server replies: SYN=1, ACK=1, Seq=5000, Ack=1001
+                Ack=1001 means: "I received your Seq=1000; next I expect Seq=1001."
+
+   # ACK (Acknowledge)
+        Sender: Client
+        Purpose:
+            Acknowledges the server’s SYN (ACK = server’s ISN + 1).
+            The connection is now fully established.
+
+        Example:
+            Client sends: ACK=1, Seq=1001, Ack=5001
+                Ack=5001 means: "I received your Seq=5000; next I expect Seq=5001."
+
+##Why Is This Needed?
+    Reliability: Ensures both devices are alive and ready.
+    Sequence Synchronization: Sets initial sequence numbers to track data order.
+    Prevents Half-Open Connections: Guards against stale or malicious SYN floods.
+
+#Example in Real Life
+##Imagine a phone call:
+    SYN → You call your friend ("Hey, can you talk?").
+    SYN-ACK → Friend answers ("Yes, I can talk! Can you hear me?").
+    ACK → You confirm ("Yes, I hear you!").
+    
+    Now, the conversation (data transfer) begins.
+  
+  
+  --Use Cases:
+        Web (HTTP/HTTPS), email (SMTP), file transfers (FTP).
+
+    Example: Loading a webpage (TCP ensures all HTML/CSS arrives intact).
+
+2. UDP (User Datagram Protocol)
+    Purpose: Low-latency, connectionless communication.
+    Working:
+        No handshake/acknowledgments.
+        Packets may be lost or arrive out of order.
+        
+    Use Cases:
+        VoIP (e.g., Zoom), DNS queries, gaming, live video streaming.
+        
+    Example: A VoIP call drops a few packets but avoids lag.
+
+##Layer 7 Protocols (Application Layer)
+1. HTTP/HTTPS (Hypertext Transfer Protocol)
+    Purpose: Fetches web resources (HTML, images, APIs).
+    Working:
+        Client sends GET /index.html; server replies with status (200 OK) + data.
+        HTTPS adds TLS encryption (port 443 vs. HTTP’s 80).
+        
+  --Use Cases:
+        Websites, REST APIs, mobile apps.
+        
+    Example: Browsing https://www.google.com.
+
+2. DNS (Domain Name System)
+    Purpose: Translates domain names (e.g., google.com) to IPs.
+    Working:
+        Hierarchical queries (root → TLD → authoritative servers).
+        Uses UDP port 53 (TCP for large responses).
+
+  --Use Cases:
+        Every internet request requiring domain resolution.
+
+    Example: Typing facebook.com triggers a DNS query to find its IP.
+
+3. DHCP (Dynamic Host Configuration Protocol)
+    Purpose: Assigns IP addresses dynamically to devices.
+    Working:
+        DISCOVER → OFFER → REQUEST → ACK (DORA process).
+        Lease time ensures IP reuse.
+
+  --Use Cases:
+        Home/office networks (avoids manual IP config).
+        
+    Example: Your phone gets 192.168.1.100 from the router when joining Wi-Fi.                              
+   
+   
+                                 
