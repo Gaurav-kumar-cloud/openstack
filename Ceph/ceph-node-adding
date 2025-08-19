@@ -1,0 +1,99 @@
+##############Configure SSH Access from Jump Server#################
+##########➤ Add New Node Entry in ~/.ssh/config on Jump Server:##########
+Host storage10
+ip  10.10.13.60
+
+
+#####Add Jump Server's Public Key to the New Node#######
+############Paste this public key into /root/.ssh/authorized_keys on the new node:#########
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIByjw39zJkMqXeK6NS/XPY+xGXXedfP2luFzNvS0mWY8 himanshu@WIN-NN2H4O1B3QR
+
+
+#######take ssh on new node#######
+ssh root@<10.10.13.60>
+
+##########copy the stroage1 public key & paste to new node#########
+vi .ssh/authorized_keys
+
+########Add Host Entries#################
+########################## Edit /etc/hosts on the storage1 node and add the new node entry:###########
+## Add entry into /etc/hosts file for Ceph str1 node##c######
+10.10.12.40 storage1
+10.10.12.41 storage2
+10.10.12.42 storage3
+10.10.12.43 storage4
+10.10.12.44 storage5
+10.10.12.45 storage6
+10.10.13.46 <storage7>
+10.10.12.75 dashboard.neevcloud.com
+
+
+############### Copy the Key to the node being added on str1 node######################
+ssh-copy-id -f -i /etc/ceph/ceph.pub root@<storage7>
+
+
+############## Install docker on the new node #############################
+sudo apt install apt-transport-https ca-certificates curl software-properties-common
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt -y update
+sudo apt -y install docker-ce
+sudo systemctl enable --now docker
+docker run hello-world
+
+######## Add the node to the cluster, run this command from storage1 node #############
+ceph orch host add <storage8> <10.10.13.47>
+
+####### Apply labels if required #################
+ceph orch host label add storage8 osd
+
+############################# tell ceph to consume any available and unused devices#####################
+ceph orch device ls
+
+#############Create OSD specs file on stroage1 node #############
+root@storage1:~# cat str7_osd.yml
+service_type: osd
+service_id: storage7_osd
+service_name: osd.storage7_osd
+placement:
+  host_pattern: 'storage7'
+spec:
+  data_devices:
+    paths:
+    - /dev/sdb
+    - /dev/sdc
+    - /dev/sdd
+    - /dev/sde
+    - /dev/sdf
+    - /dev/sdg
+    - /dev/sdh
+    - /dev/sdi
+    - /dev/sdj
+    - /dev/sdk
+    - /dev/sdl
+    - /dev/sdm
+  unmanaged: False
+
+#########################Erase any content on the disks, login to the particular node ################
+wipefs -a /dev/sdb
+
+
+############################Adjust recovery parameters ################
+ceph osd set noscrub
+ceph osd set nodeep-scrub
+ceph tell osd.* injectargs --osd-max-backfills 1 --osd-recovery-max-active 1 --osd-recovery-op-priority 1
+
+############Apply OSD Spec ##############    
+ceph orch apply -i str8_osd.yml
+
+#############check osd status ##########
+ceph osd df tree
+
+#############Revert the applied settings ###############
+ceph osd unset noscrub
+ceph osd unset nodeep-scrub
+ceph tell osd.* injectargs --osd-max-backfills 8 --osd-recovery-max-active 4 --osd-recovery-op-priority 1
+
+
+
