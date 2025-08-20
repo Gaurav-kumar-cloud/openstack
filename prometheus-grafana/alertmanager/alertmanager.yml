@@ -1,0 +1,18 @@
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.gmail.com:587'        # your SMTP server
+  smtp_from: 'gk1071950@gmail.com'          # sender email
+  smtp_auth_username: 'gk1071950@gmail.com'
+  smtp_auth_password: 'GAU123rav@#'    # Gmail app password if using Gmail
+
+route:
+  receiver: 'email-alerts'       # default route
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 1h
+
+receivers:
+  - name: 'email-alerts'
+    email_configs:
+      - to: 'gauravlinux76@example.com'    # destination email
+        send_resolved: true
