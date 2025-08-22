@@ -64,11 +64,12 @@ fatal: [controller1]: FAILED! => {"msg": "The task includes an option with an un
    so and edit /etc/kolla/globals.yml add a entry like- 
      #rabbitmq_image_full: "quay.io/openstack.kolla/rabbitmq:2023.2-ubuntu-jammy"    (add this when upgrade rabbitmq from version 3.11.x to 3.12.x after upgrade successfully commant this)
      rabbitmq_image_full: "quay.io/openstack.kolla/rabbitmq:2024.1-ubuntu-jammy"     (add this when upgrade rabbitmq from version 3.12.x to 3.13.x) 
-
+     rabbitmq_image_full: "quay.io/openstack.kolla/rabbitmq:2024.2-ubuntu-noble"
 ######## upgrade rabbitmq #################
 kolla-ansible -i multinode rabbitmq-upgrade   -e rabbitmq_version_suffix=3.11   -e rabbitmq_image_full=quay.io/openstack.kolla/rabbitmq:2023.2-ubuntu-jammy
 kolla-ansible -i multinode rabbitmq-upgrade   -e rabbitmq_version_suffix=3.12   -e rabbitmq_image_full=quay.io/openstack.kolla/rabbitmq:2024.1-ubuntu-jammy
-
+kolla-ansible upgrade -i multinode --tags rabbitmq \
+  -e rabbitmq_image_full=quay.io/openstack.kolla/rabbitmq:2024.2-ubuntu-noble
 #############Reconfigure Core Services#############
 kolla-ansible -i multinode reconfigure --tags mariadb,rabbitmq,keystone
 kolla-ansible -i multinode reconfigure --tags nova,neutron,glance,cinder,heat,placement,octavia,magnum,designate,masakari,trove,grafana,barbican,swift
@@ -89,7 +90,7 @@ kolla-ansible -i multinode upgrade --limit compute1
 
 
 
-###########rabbitmq upgrade from 2024.1 to 2024.2 release##########
+###########rabbitmq upgrade from 2024.1 to 2024.2 release##########(optional)
 1)edit file
   cat /opt/osp/share/kolla-ansible/ansible/roles/rabbitmq/tasks/version-check.yml
   
