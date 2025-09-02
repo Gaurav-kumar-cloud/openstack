@@ -1,0 +1,88 @@
+#########New ceph pool adding in ceph storage and intergrate with openstack#############
+
+####step-1 add raw disks in node########
+   -- get two or more raw disks
+   -- wipe those disks 
+  
+####step-2 add all disks in ceph#######
+-- add those disks in ceph storage
+vi seemoosp_osd.yml
+service_type: osd
+service_id: seemoosp_osd
+service_name: osd.seemoosp_osd
+placement:
+  host_pattern: "seemoosp"
+spec:
+  data_devices:
+    paths:
+    - /dev/nvme1
+    - /dev/nvme2
+    - /dev/nvme3
+  unmanaged: False
+  
+ceph orch apply osd -i seemoosp_osd.yml
+
+###step-3 - Create pool for those osd's#######like Nvme disks == pool = NVMe
+ceph osd pool create Nvme_volumes
+rbd pool init Nvme_volumes
+
+
+###step-4 set permissions in ceph.client.cinder.keyring#########
+vi /etc/ceph/ceph.client.cinder.keyring
+    [client.cinder]
+	key = AQC4mbZonlXAKBAAU9CnMavuO6wQZ2SlUtN6Rw==
+	caps mon = "profile rbd"
+	caps osd = "profile rbd pool=volumes, profile rbd pool=Nvme_volumes, profile rbd-read-only pool=images"
+	caps mgr = "profile rbd"
+
+###step-5 go to the openstack node#########
+note: vi /etc/kolla/config/cinder.conf
+[DEFAULT]
+enabled_backends = rbd-1,Nvme
+cinder_internal_tenant_project_id = 283969104f024c3487d99fc0e02db212
+cinder_internal_tenant_user_id    = 45b7837b6740474bb43bc39cbd4e9a73
+image_volume_cache_enabled = True
+
+[rbd-1]
+image_volume_cache_enabled = True
+rados_connect_timeout = 30
+rbd_clone_copy_on_write = true
+
+
+
+[Nvme]
+volume_driver = cinder.volume.drivers.rbd.RBDDriver
+volume_backend_name = Nvme
+rbd_pool = Nvme_volumes
+rbd_ceph_conf = /etc/ceph/ceph.conf
+rados_connect_timeout = 5
+rbd_user = cinder
+rbd_cluster_name = ceph
+rbd_keyring_conf = /etc/ceph/ceph.client.cinder.keyring
+rbd_secret_uuid = a7fcca42-da51-47c2-ba7a-1b498bf0f2ce
+report_discard_supported = True
+
+
+###step-6 then deploy the cinder again#########
+kolla-ansible deploy -i multinode -t cinder
+
+####step-7 varify the cinder-backend####
+openstack volume service list         (node will create by name of osp@nvme1)
+
+
+####step-8 create volume type of nvme and also set properties######
+openstack volume type create nvme
+openstack volume type set --property volume_backend_name=Nvme nvme
+
+###step-9 create test volume using nvme volume type########
+openstack volume create --size 10 --type nvme test-volume-rbd2
+
+
+####step-10 varify the volumes in ceph nvme_volumes pool#####
+rbd -p nvme_volumes ls --id cinder
+
+
+
+
+
+
