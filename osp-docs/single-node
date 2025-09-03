@@ -103,6 +103,17 @@ ansible-galaxy collection install community.general
 ansible-galaxy collection install ansible.netcommon
 
 ### Address SDK Issues##########
+############################### Deployment ###############################
+##error for SDK for python] 
+python3 --version
+sudo apt-get update
+pin install docker
+apt update
+apt install -y libdbus-1-dev libdbus-glib-1-dev pkg-config python3-dev
+pip install dbus-python
+
+or
+
 1. Verify Python version:
 
 python3 --version
