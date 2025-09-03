@@ -1,0 +1,61 @@
+#######Kolla-Ansible Upgrade & Reconfiguration Guide (2024.2)######
+This document outlines the steps to back up configuration, update Kolla-Ansible, regenerate passwords, and perform an upgrade on a multinode OpenStack deployment.
+
+#########Backup Existing Kolla Configuration############
+cp -r /etc/kolla kolla.bak
+
+#########Generate New Passwords & Merge with Existing#########
+cp /etc/kolla/passwords.yml passwords.yml.old
+cp /opt/osp/share/kolla-ansible/etc_examples/kolla/passwords.yml passwords.yml.new
+kolla-genpwd -p passwords.yml.new
+kolla-mergepwd --old passwords.yml.old --new passwords.yml.new --final /etc/kolla/passwords.yml
+
+
+#########Upgrade Kolla-Ansible to 2024.1#########
+pip3 install --upgrade git+https://opendev.org/openstack/kolla-ansible@stable/2024.2
+
+######### Install Required Dependencies###########
+kolla-ansible install-deps
+
+#######Regenerate Configuration Files########
+kolla-ansible genconfig -i multinode 
+
+#########add in globals.yml:########
+om_enable_rabbitmq_quorum_queues: true
+om_enable_rabbitmq_high_availability: false
+
+
+########Pull Updated Docker Images##########
+kolla-ansible pull -i multinode pull
+
+#################Stop Targeted OpenStack Services##########(optional)
+kolla-ansible  stop -i multinode --tags nova,neutron,keystone,glance,swift,cinder,heat,placement,octavia,barbican,magnum,designate,masakari,trove,openvswitch --yes-i-really-really-mean-it
+
+###########Reset RabbitMQ State#############
+kolla-ansible rabbitmq-reset-state -i multinode 
+
+####List queues with type####
+docker exec -it rabbitmq rabbitmqctl list_queues name messages consumers arguments
+
+output:
+ Listing queues for vhost / ... name messages consumers arguments notifications.sample 0 3 [{"x-queue-type","quorum"}] notifications.error 0 3 [{"x-queue-type","quorum"}] notifications.debug 0 3 [{"x-queue-type","quorum"}] notifications.info 0 3 [{"x-queue-type","quorum"}] notifications.audit 0 3 [{"x-queue-type","quorum"}] notifications.warn 0 3 [{"x-queue-type","quorum"}] notifications.critical 0 3 [{"x-queue-type","quorum"}]
+
+###stop the rabbitmq container######
+kolla-ansible stop -i multinode -t rabbitmq 
+
+
+######redeploy the rabbitmq#######
+kolla-ansible deploy -t multinode -t rabbitmq
+
+#############Reconfigure Core Services#############
+kolla-ansible reconfigure -i multinode  --tags mariadb,rabbitmq,keystone
+kolla-ansible reconfigure -i multinode  --tags nova,neutron,glance,cinder,heat,placement,octavia,magnum,designate,masakari,grafana,barbican,swift
+
+###########Run Prechecks#############
+kolla-ansible prechecks -i multinode
+
+############Upgrade Controllers#############
+kolla-ansible upgrade -i multinode --limit controller1,controller2,controller3 -t <keystone>
+
+############Upgrade computes################
+kolla-ansible upgrade  -i multinode  --limit compute1
