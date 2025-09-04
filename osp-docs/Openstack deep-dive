@@ -1,0 +1,3415 @@
+##Openstack:
+  OpenStack is a modular cloud infrastructure platform designed to control large pools of compute, storage, and networking resources, all managed through a dashboard (Horizon) or OpenStack APIs. Its architecture is divided primarily into Control Plane, Data Plane, and APIs.
+  
+##Control Plane (Brain of OpenStack)
+The Control Plane manages and orchestrates resources across the cloud. It includes all the services responsible for scheduling, authentication, networking decisions, and storage provisioning.
+
+##Core Control Plane Components:
+Service	                                                                 Description
+Keystone	                                    Identity service for authentication and authorization (users, projects, roles, tokens).
+Nova (Scheduler)	                            Schedules virtual machine (VM) placement on compute nodes.
+Glance	                                            Manages VM images.
+Neutron (Server)	                            Manages networking, IP address assignment, routers, and security groups.
+Cinder (Scheduler/Manager)	                    Manages block storage volumes and scheduling where to place them.
+Placement API	                                    Tracks and allocates compute resources.
+Heat	                                            Orchestrates infrastructure using templates.
+Horizon	                                            Web dashboard to manage OpenStack services.
+Ceilometer/Gnocchi	                            Collects and stores telemetry data (metering/monitoring).
+Barbican	                                    Manages secrets (passwords, keys, certificates).
+RabbitMQ/Message Queue	                            Facilitates communication between services.
+MariaDB/Galera	                                    Central relational database storing service metadata.
+
+
+##Data Plane (Actual Work Happens Here)
+The Data Plane handles the actual user workload: launching VMs, transferring data, network traffic, etc.
+
+-->Core Data Plane Components:
+Service	                                                        Description
+Nova Compute	                                     The hypervisor (e.g., KVM) that runs VMs on compute nodes.
+Neutron L2/L3 Agents	                             Implements network connectivity, routing, DHCP, etc. on compute/network nodes.
+Cinder Volume	                                     manages storage backends like LVM, NFS, Ceph.
+Ceph	                                             Often used as backend for volumes, images, and object storage.
+Libvirt/QEMU/KVM	                             The actual virtualization stack for managing VMs.
+OVS / Linux Bridge	                             Networking backends on compute/network nodes.
+
+Note: Data plane components are distributed across compute and storage nodes.
+
+
+##APIs (Northbound Interfaces)
+OpenStack services expose RESTful APIs that allow users and tools (like Terraform, Ansible, CLI clients) to interact with the cloud infrastructure.
+
+Examples:
+API	                                    Purpose
+Keystone API	                Authentication (get token, validate user).
+Nova API	                Create, stop, list VMs.
+Glance API	                Upload, delete, list images.
+Neutron API	                Create networks, subnets, routers.
+Cinder API	                Create/delete volumes, attach/detach to VMs.
+Swift API	                Object storage interactions (upload/download).
+
+
+               +-------------------+
+               |   Horizon (GUI)   |
+               +--------+----------+
+                        |
+                 +------v------+
+                 |    APIs     |   <-- Northbound REST APIs
+                 +------+------+
+                        |
+                +-------v--------+       Control Plane
+                |                |
+   +------------+ Keystone       +---------------+
+   |            | Nova Scheduler|               |
+   |            | Glance        |               |
+   |            | Neutron Server|               |
+   |            | Cinder Manager|               |
+   |            | Heat, Gnocchi |               |
+   |            | DB + MQ (Bus) |               |
+   |            +----------------               |
+   |                                              |
+   |                         +--------------------v---------------+
+   |                         |     Data Plane                      |
+   |     +--------------+    +----------------------------------+  |
+   |     | Compute Node |--->| Nova Compute + Neutron Agent     |  |
+   |     |              |    | Libvirt/QEMU + OVS/Bridge        |  |
+   |     +--------------+    +----------------------------------+  |
+   |     +--------------+    +----------------------------------+  |
+   |     | Storage Node |--->| Cinder Volume / Ceph OSD         |  |
+   |     +--------------+    +----------------------------------+  |
+   |                                                              |
+   +--------------------------------------------------------------+
+   
+example: OpenStack Architecture Diagram (3 Controller + 2 Compute)
+                          +----------------------------+
+                         |     Load Balancer (VIP)    |
+                         |    (HAProxy + Keepalived)  |
+                         +-------------+--------------+
+                                       |
+              +------------------------+------------------------+
+              |                        |                        |
+      +-------v------+        +--------v-------+        +-------v------+
+      | Controller 1 |        | Controller 2   |        | Controller 3 |
+      | Keystone     |        | Keystone       |        | Keystone     |
+      | Glance       |        | Glance         |        | Glance       |
+      | Nova API     |        | Nova API       |        | Nova API     |
+      | Neutron Srv  |        | Neutron Srv    |        | Neutron Srv  |
+      | Horizon      |        | Horizon        |        | Horizon      |
+      | Cinder Sched |        | Cinder Sched   |        | Cinder Sched |
+      | DB (Galera)  |        | DB (Galera)    |        | DB (Galera)  |
+      | MQ (Rabbit)  |        | MQ (Rabbit)    |        | MQ (Rabbit)  |
+      +-------+------+        +--------+-------+        +-------+------+
+              |                        |                        |
+              +------------------------+------------------------+
+                                       |
+                           +-----------v------------+
+                           |  Shared Storage (e.g., |
+                           |  Ceph, NFS, LVM)       |
+                           +------------------------+
+                                       |
+                      +----------------+----------------+
+                      |                                 |
+              +-------v-------+                 +-------v-------+
+              |   Compute 1   |                 |   Compute 2   |
+              | Nova Compute  |                 | Nova Compute  |
+              | Neutron Agent |                 | Neutron Agent |
+              | Libvirt/QEMU  |                 | Libvirt/QEMU  |
+              +---------------+                 +---------------+
+
+    
+###Ceph as a Backend for OpenStack
+OpenStack Service	          Ceph Pool Used	                                           Notes
+Cinder	                            volumes	                                    RBD pool; Cinder uses Ceph RBD driver
+Glance	                            images	                                    Stores VM images directly in Ceph RBD pool
+Nova	                            Uses Cinder & Glance pools	                    Boot from volume or image from RBD
+Gnocchi	                            metrics (optional)	                            Time-series data backend
+Swift	                            Ceph RGW (default.rgw.buckets.data)	            Optional:RGW acts as S3/Swift-compatible object store
+
+
+
+## Updated Architecture Diagram with Ceph
+                             +-----------------------------+
+                          |  Load Balancer (VIP, HAProxy|
+                          |    + Keepalived on controllers|
+                          +-----------------------------+
+                                      |
+        +-----------------------------+-----------------------------+
+        |                             |                             |
++-------v-------+           +---------v--------+           +--------v--------+
+| Controller 1  |           | Controller 2     |           | Controller 3     |
+| Keystone      |           | Same Services    |           | Same Services    |
+| Glance (RBD)  |           | (HA)             |           | (HA)             |
+| Nova API      |           +------------------+           +------------------+
+| Neutron Srv   |         
+| Horizon       |         
+| Cinder Sched  |         
+| DB + MQ       |
++-------+-------+
+        |
+        |                +-------------------------------+
+        |                |      Ceph Cluster Backend     |
+        |                |  MONs + MGRs + OSDs + RGWs     |
+        |                +---------------+---------------+
+        |                                |
+  +-----v-----+                   +------v------+
+  |   Ceph 1  |                   |   Ceph 2     |
+  | MON + OSD |                   | MON + OSD    |
+  +-----------+                   +--------------+
+          |                             |
+          +-------------+--------------+
+                        |
+                 +------v------+
+                 |   Ceph 3    |
+                 | MON + OSD   |
+                 +-------------+
+
+        +-----------------------------+-----------------------------+
+        |                             |                             |
++-------v--------+           +--------v--------+          (More compute...)
+|  Compute 1     |           |   Compute 2     |
+| Nova Compute   |           | Nova Compute    |
+| Neutron Agent  |           | Neutron Agent   |
+| Libvirt/QEMU   |           | Libvirt/QEMU    |
+| Ceph Client    |           | Ceph Client     |
++----------------+           +-----------------+
+
+###How OpenStack Uses Ceph
+
+    Glance:
+
+        Images are stored in Ceph using the rbd driver.
+        No need to copy image to compute node—Nova boots directly from RBD.
+
+    Cinder:
+
+        Uses RBD pools for block volume provisioning.
+        Volumes can be attached to VMs on compute nodes with Ceph client.
+
+    Nova:
+
+        Can boot VMs directly from volumes in Ceph.
+        Nova-compute interacts with Ceph through Libvirt + QEMU.
+
+    Gnocchi (Optional):
+
+        Uses Ceph backend to store metrics data for telemetry.
+
+    RGW (Optional Swift replacement):
+
+        Ceph's RADOS Gateway offers an S3 and Swift-compatible API.
+        Can use s3cmd, swift CLI, or OpenStack's Swift-compatible clients.
+
+
+#Deployment Tips
+    Use cephx authentication with keyrings for OpenStack services.
+    Place Ceph configuration in /etc/ceph/ceph.conf and keys in /etc/ceph/ on all nodes.
+    Use rbd secrets in libvirt for secure access to Ceph volumes.
+    Use rbd integration in nova.conf, cinder.conf, and glance.conf.
+
+
+##What is HAProxy?
+HAProxy (High Availability Proxy) is a TCP/HTTP load balancer and reverse proxy used to distribute traffic across multiple backend servers for high availability, fault tolerance, and performance scaling.
+In an OpenStack environment, HAProxy sits at the front of all API and control plane services (like Keystone, Nova API, Neutron API, etc.) and balances incoming requests to multiple controller nodes.
+
+
+#Architecture of HAProxy in OpenStack
+💡 Typical Layout (3 Controllers + VIP)
+                               [ VIP: 192.168.1.100 ]
+                                      |
+                               +------+------+
+                               |   HAProxy    |  (Runs on all controllers)
+                               +------+------+
+                                      |
+         +----------------------------+----------------------------+
+         |                            |                            |
++--------v--------+         +--------v--------+         +--------v--------+
+|  Controller 1   |         |  Controller 2   |         |  Controller 3   |
+|  Keystone API   |         |  Keystone API   |         |  Keystone API   |
+|  Nova API       |         |  Nova API       |         |  Nova API       |
+|  Neutron API    |         |  Neutron API    |         |  Neutron API    |
+|  ...            |         |  ...            |         |  ...            |
++-----------------+         +-----------------+         +-----------------+
+Note: 
+    HAProxy listens on the VIP (Virtual IP) (e.g. 192.168.1.100)
+    It forwards requests to healthy controller nodes
+    Keepalived usually manages the VIP (election/failover)
+
+
+##Purpose of HAProxy in OpenStack
+Feature	                                     Description
+High Availability	              If one controller fails, traffic is sent to others
+Load Balancing	                      Balances API and dashboard traffic among controllers
+Single Entry Point	              One VIP (via HAProxy) for all service access
+Health Checks	                      Monitors API availability and skips failed backends
+
+
+Note:Services behind HAProxy:
+    Keystone (5000)
+    Glance API
+    Nova API
+    Neutron API
+    Horizon (80/443)
+    Cinder API
+    Placement API
+    Ironic API (optional)
+    Ceilometer/Gnocchi APIs (if used)
+
+
+##How HAProxy Communicates with Other Services
+
+    External user/CLI/API sends request to VIP (e.g., 192.168.1.100)
+    HAProxy listens on ports like:
+        5000 (Keystone)
+        8774 (Nova)
+        9696 (Neutron)
+        9292 (Glance)
+        80/443 (Horizon)
+
+    HAProxy forwards the request to one of the backend controller nodes (via TCP or HTTP).
+    If one backend is down or unresponsive, HAProxy skips it based on health checks.
+    HAProxy is transparent: clients don’t know which controller handled the request.
+
+
+##Let’s walk through what happens step-by-step when a user runs a CLI command like:
+like:
+      openstack image list
+      
+Note:  This command queries the Glance (Image) service to list available images. But to do that, it must first authenticate and route through the control plane, usually via HAProxy + Keystone + Glance
+
+step1:
+       The openstack CLI tool reads your environment variables:   like source environments variables or rc file.
+       It knows you want to list images, which means:
+          Authenticate with Keystone
+          Request image list from Glance API
+
+step2: Authentication with Keystone
+  
+  1- CLI sends a POST request to the Keystone API at http://192.168.1.100:5000/v3/auth/tokens
+
+  2- This request hits:
+        HAProxy, which is listening on port 5000
+        HAProxy forwards the request to one of the healthy Keystone backends (controller1, controller2, or controller3)
+
+  3- Keystone verifies the credentials (via database), and returns:
+        A token in the response header
+        A service catalog in the response body (includes Glance endpoints)
+
+
+step3: CLI Discovers Glance Endpoint
+      
+    CLI now uses the token to talk to the Glance API
+    It finds Glance’s public endpoint (e.g., http://192.168.1.100:9292) from the service catalog
+
+
+step4: CLI Requests Image List from Glance
+     
+ 1- CLI sends a GET /v2/images to the Glance endpoint, using the token
+ 2- Again, request hits:
+        HAProxy (on port 9292)
+        HAProxy routes to one of the controller nodes running Glance API
+
+ 3- Glance:
+        Verifies the token with Keystone if needed (token validation)
+        Queries its image backend (usually Ceph RBD or local DB)
+        Returns the list of images in JSON format
+
+
+step5: CLI Displays the Output
+ The openstack CLI parses the JSON response and formats it into a table:
++--------------------------------------+---------------------+--------+
+| ID                                   | Name                | Status |
++--------------------------------------+---------------------+--------+
+| 3ec5c0a0-8911-4f9e-a457-d6f0f284bc2b | ubuntu-22.04        | active |
++--------------------------------------+---------------------+--------+
+ 
+ 
+ Note: Behind the Scenes (Detailed Flow)
+
+User CLI: openstack image list
+     |
+     |-- Auth Request (POST /v3/auth/tokens)
+     |      to Keystone (via HAProxy:5000)
+     |
+     |<-- Auth Token + Service Catalog
+     |
+     |-- Image List Request (GET /v2/images)
+     |      to Glance API (via HAProxy:9292)
+     |
+     |<-- JSON List of Images
+     |
+     --> CLI displays table format
+     
+Note:
+  If HAProxy or Keystone is Down?
+    HAProxy Down → No communication with any OpenStack API → CLI commands fail
+    Keystone Down → Authentication fails → Token not issued → All OpenStack CLI/API calls fail
+    Glance Down → Token is issued, but image list fails with a 503 or connection refused
+     
+
+note: What Happens Internally (Querying Image Metadata & Data)  ---(comes from step4-point3(2))
+
+Step 1: Glance Queries Image Metadata
+Glance stores image metadata (name, size, checksum, status, ID, etc.) in the MariaDB database (usually Galera cluster on controllers).
+
+Example:
+
+SELECT * FROM images WHERE status='active';
+
+Step 2: Glance Retrieves Image Location/Pointer
+    For Ceph backend, the image metadata includes a reference like:
+
+    rbd://<fsid>/images/<image-id>/snap
+
+This tells Glance:
+    Ceph cluster FSID (for authentication)
+    Pool: images
+    Object name: <image-id>
+    Snapshot: (optional, usually empty)
+
+Step 3: Glance Connects to Ceph
+    Glance loads /etc/ceph/ceph.conf to discover monitor IPs
+    It uses the client.glance keyring to authenticate
+    It connects to the Ceph monitor, which tells it which OSDs store the image
+    Glance contacts the OSDs and reads the image data (chunks)
+
+Step 4: Glance Streams the Image to Nova/Cinder or CLI
+    If this is part of a glance image-download or nova boot:
+        Glance streams the binary image data to:
+            CLI (if download)
+            Nova (if boot from image)
+            Cinder (if creating bootable volume)
+
+
+ --> [CLI] ──> [HAProxy:9292] ──> [Glance API]
+                        │
+                        ├──> [MariaDB] → fetch metadata
+                        │
+                        └──> [Ceph MON]
+                              │
+                              └──> [Ceph OSDs] → get image chunks
+                              
+                              
+                              
+
+1)####Keystone#########
+ -->Keystone: What Is It?
+
+Keystone is the identity service of OpenStack. It provides authentication, authorization, and service discovery for all other OpenStack services. It acts as the central security and access control hub in the OpenStack control plane.                          
+          
+-->User Authentication and Token Generation
+a. User Authentication
+
+Keystone verifies the identity of users using the credentials provided (typically username, password, domain, and project).
+
+Steps:
+    A user sends credentials to Keystone’s /v3/auth/tokens endpoint.
+    Keystone verifies:
+        Username/password
+        Domain and project
+        If user is active and allowed to log in
+
+    If valid, it generates a token.
+
+b. Token Generation
+
+Once authentication succeeds, Keystone issues a token – a temporary access credential used to interact with OpenStack APIs.
+
+There are two common token types:
+Type	                                    Description
+UUID	                               Unique string (legacy)
+Fernet	                               Default in modern OpenStack (lightweight, stateless, encrypted)
+
+-->What’s in the token:
+     User identity (ID, name)
+     Roles
+     Project and domain
+     Expiry time
+     Service catalog (list of endpoints)
+
+Example flow:
+
+openstack --os-username admin --os-password secret --os-auth-url http://<VIP>:5000/v3 ...
+
+Keystone returns a X-Subject-Token header containing the token.        
+
+
+c. Integration with LDAP or Federated Identity(optional)
+
+Keystone can integrate with external identity providers, making it flexible for enterprise environments.
+a. LDAP (Lightweight Directory Access Protocol)
+    You can configure Keystone to use LDAP for authenticating users and groups.
+    Users remain in the corporate directory (like Active Directory), but Keystone manages access.
+
+Sample config in keystone.conf:
+
+[identity]
+driver = ldap
+
+[ldap]
+url = ldap://ldap.example.com
+user = cn=admin,dc=example,dc=com
+password = secret
+user_tree_dn = ou=users,dc=example,dc=com
+group_tree_dn = ou=groups,dc=example,dc=com
+
+b. Federated Identity (SSO/SAML/OIDC)
+
+Keystone can integrate with:
+    SAML2.0 (via Shibboleth)
+    OIDC (e.g., Google, Keycloak)
+    Kerberos/SPNEGO
+
+This allows users to authenticate via external identity providers (IDPs), enabling Single Sign-On (SSO) across clouds.
+
+Use case: Cloud providers can allow users from different organizations to log in with their own credentials.
+
+
+d. Service Catalog
+
+After authentication, Keystone returns a service catalog to the user or client.
+
+What is the Service Catalog?
+A list of all OpenStack services and their API endpoints, including:
+    Nova (Compute)
+    Glance (Image)
+    Neutron (Network)
+    Cinder (Block Storage)
+    Swift (Object Storage)
+    Heat, Magnum, Trove, etc.
+
+#Each entry includes:
+    Service type (compute, network, etc.)
+    Service name
+    Interface type (public, internal, admin)
+    URLs for each endpoint
+
+#Example Service Catalog Entry (Partial JSON):
+
+"catalog": [
+  {
+    "type": "compute",
+    "name": "nova",
+    "endpoints": [
+      {
+        "interface": "public",
+        "url": "http://192.168.1.100:8774/v2.1",
+        "region": "RegionOne"
+      }
+    ]
+  },
+  {
+    "type": "identity",
+    "name": "keystone",
+    "endpoints": [
+      {
+        "interface": "public",
+        "url": "http://192.168.1.100:5000/v3",
+        "region": "RegionOne"
+      }
+    ]
+  }
+]
+
+Note: So, after a user is authenticated, OpenStack clients know exactly where to send API requests by reading this catalog.
+
+
+Note:
+-->Keystone Communication in OpenStack
+     Clients (CLI, Horizon, services) → Authenticate with Keystone
+     Keystone → Issues token + service catalog
+     Clients use token to call other APIs (Nova, Glance, Neutron, etc.)
+     Those services validate the token with Keystone
+
+
+##If Keystone Fails or Is Misconfigured
+Problem	                                               Impact
+Keystone is down	                All user/API logins fail – no token can be issued
+Token validation fails	                All OpenStack services stop accepting API calls
+Service catalog broken	                Clients can't find endpoints (Nova, Glance, etc.)
+LDAP misconfigured	                External user auth fails
+
+Note: Keystone is a core dependency for all OpenStack interactions.
+
+
+###What Is a Project/Tenant in OpenStack?
+A project (or tenant) in OpenStack is:
+    A logical grouping of:
+        Users
+        Resources (VMs, volumes, networks, etc.)
+    Used to isolate access
+    Enables multi-tenancy in cloud environments
+    Has its own quotas (e.g., max RAM, instances, volumes)
+    Used for billing/accounting purposes
+    Scoped access: A user belongs to a project and has roles (like admin, member) in that project.
+
+#Why Two Terms?
+🔹 tenant was the term in Keystone v2.0
+    Example in early CLI:
+
+    --os-tenant-name admin
+
+🔹 project is used in Keystone v3 (the default in modern OpenStack)
+    New CLI syntax:
+
+    --os-project-name admin
+
+    In Keystone v3, you can have domains → projects → users hierarchy.
+
+#Example: User Authentication Scope
+A user logs in to a specific project scope:
+"scope": {
+  "project": {
+    "name": "demo",
+    "domain": { "name": "Default" }
+  }
+}
+
+That means all resource operations (VMs, volumes, etc.) will be created within the demo project.
+
+#Projects vs Domains
+It’s important not to confuse projects with domains:
+
+Concept	                        Description
+Project	                A container for resources and users (like a tenant or account)
+Domain	                A grouping of projects and users — used for large-scale multitenancy (e.g., company A vs company B)
+
+Note: 
+A domain contains multiple projects
+Each project can contain users, roles, resources
+
+
+
+#######Components of keystone#######
+##What Is Nova?
+Nova is the compute service of OpenStack. It manages the entire lifecycle of virtual machines (instances), including:
+    Scheduling
+    Creating
+    Starting/stopping
+    Migrating
+    Deleting
+Nova is designed to be scalable and API-driven, supporting multiple hypervisors (KVM, QEMU, Xen, VMware, etc.)
+
+##Nova Internal Communication Flow
+
+All Nova components communicate via:
+    📬 RabbitMQ (message bus) for asynchronous RPC messages
+    🗄️ MariaDB (database) for storing instance and resource state
+    🔗 REST APIs for user requests (via nova-api)
+    🔐 Keystone for authentication
+
+
+1) RabbitMQ (Message Bus)
+🔸 Purpose:
+     RabbitMQ is the asynchronous messaging backbone of OpenStack. It is used for Remote Procedure Calls (RPCs) between Nova services.
+     
+ -  How It Works:
+    All Nova services (api, compute, conductor, scheduler) connect to RabbitMQ.
+    Services send messages (e.g., build_instance) via queues.
+    Consumers (like nova-compute) listen on queues and take action.
+
+Example:
+User runs:
+
+openstack server create ...
+
+-    nova-api places a message on a queue:
+-    cast('scheduler.select_destinations', ...)
+-    nova-scheduler consumes that message, selects a host, and returns it.
+-    Then nova-conductor sends a message like:
+-    cast('compute.build_and_run_instance', host='compute1')
+-    nova-compute picks it up from its queue and spawns the instance.
+    
+
+2)MariaDB (Nova Database)
+🔸 Purpose:
+    MariaDB (or MySQL) stores the state and metadata of all Nova resources:
+    Instances
+    Flavors
+    Quotas
+    Host resource tracking
+    Migrations
+    Actions history
+   
+Note: Nova does not store actual image or network data, but only pointers (e.g., to Glance image ID or Neutron port ID).
+
+#How It Works:
+    nova-api inserts a new row into instances table when a user requests a VM.
+    nova-compute updates the task_state, vm_state columns as the build progresses.
+    nova-conductor mediates DB writes to prevent compute nodes from writing directly.
+
+-->Example Tables:
+Table Name	                           Stores
+instances	                     Metadata for all VMs
+instance_extra	                     Extra config, metadata
+instance_info_caches	             IP addresses and networks
+migrations	                     Live/Cold migration history
+flavors	                             Available VM types
+quotas	                             Usage and limits per project/user
+
+#Example Flow:
+    API request to create VM → inserts instance row with vm_state = building
+    nova-compute builds VM → updates DB to active
+    Later, you run:
+ 
+      openstack server list
+→ nova-api reads this from the DB and returns the VM list.
+
+
+3)REST APIs (via nova-api)
+🔸 Purpose:
+The nova-api service exposes RESTful APIs over HTTP for:
+    Users (via CLI or Horizon)
+    Other services (e.g., Heat, Glance)
+
+#How It Works:
+When you run:
+
+openstack server list
+
+    It makes a GET request to:
+    
+    http://<nova-api>:8774/v2.1/servers
+    
+-   nova-api authenticates the request (with Keystone)
+-   Then queries the DB and returns the result
+
+#Key Endpoints:
+API Endpoint	                         Action
+POST /servers	                     Create a new VM
+GET /servers/{id}	             Get VM details
+DELETE /servers/{id}	             Delete a VM
+GET /flavors	                     List flavors
+POST /servers/{id}/action 	     Perform action (reboot, resize)
+
+##Example Flow: Create VM
+User CLI (openstack server create)
+     ↓
+[REST API] nova-api
+     ↓
+[Auth] Keystone (token issued + validated)
+     ↓
+[Message] nova-scheduler ← RabbitMQ
+     ↓
+[Decision] host=compute1
+     ↓
+[Message] nova-conductor → nova-compute
+     ↓
+[Spawns] VM via libvirt
+     ↓
+[DB] instance status updated in MariaDB
+
+
+
+##Real Debug Trace of a VM Spawn Request (nova-api, nova-scheduler, nova-compute, etc.)
+Here’s a realistic step-by-step log trace across multiple Nova components when you create a VM:
+
+Command:
+
+openstack server create --image ubuntu --flavor m1.small --network private --key-name mykey testvm
+
+1. /var/log/nova/nova-api.log
+INFO nova.api.openstack.requestlog [req-abc123...] POST /v2.1/servers
+INFO nova.api.openstack.compute.servers [req-abc123...] Creating server with image ubuntu, flavor m1.small
+INFO nova.scheduler.client.report [req-abc123...] Got allocation candidates from placement API
+
+→ Nova API accepts the request and talks to Placement API to check available resources.
+
+2. /var/log/nova/nova-scheduler.log
+INFO nova.scheduler.utils [req-abc123...] Attempting to select host(s) for instance
+DEBUG nova.scheduler.filters.ram_filter [req-abc123...] Host compute1 passes RamFilter
+DEBUG nova.scheduler.filters.compute_filter [req-abc123...] Host compute1 passes ComputeFilter
+INFO nova.scheduler.host_manager [req-abc123...] Selected host: compute1 (score=120)
+
+→ Scheduler filters out hosts and selects compute1.
+
+3. /var/log/nova/nova-conductor.log
+INFO nova.conductor.manager [req-abc123...] Scheduling finished, sending build request to compute1
+
+→ Conductor sends the actual build request to nova-compute@compute1 via RabbitMQ.
+
+4. /var/log/nova/nova-compute.log (on compute1)
+INFO nova.compute.manager [req-abc123...] Starting instance testvm
+INFO nova.virt.libvirt.driver [req-abc123...] Creating image from Glance
+INFO nova.compute.resource_tracker [req-abc123...] Updating usage for node compute1
+INFO nova.compute.manager [req-abc123...] Successfully launched instance: testvm (UUID: xxx)
+
+→ nova-compute spawns the VM using libvirt/KVM, pulls image from Glance, configures networking via Neutron, and updates status.
+
+5. /var/log/nova/nova-api.log (again)
+INFO nova.api.openstack.compute.servers [req-abc123...] Instance created successfully
+
+→ API confirms the creation and returns a success response to the CLI.
+
+
+-->      [ User / Horizon / CLI ]
+                   │
+         REST API  │  (token + request)
+                   ▼
+               ┌──────────┐
+               │ nova-api │
+               └──────────┘
+                   │
+          [Auth]   │ Keystone
+                   ▼
+             ┌────────────┐
+             │ Placement  │ ← checks resources
+             └────────────┘
+                   │
+         Schedules via RPC (RabbitMQ)
+                   ▼
+           ┌─────────────────┐
+           │ nova-scheduler  │ ← filters + weighers
+           └─────────────────┘
+                   │
+      RPC call to selected compute host
+                   ▼
+           ┌────────────────┐
+           │ nova-conductor │ ← DB coordination
+           └────────────────┘
+                   │
+         RPC to compute host via MQ
+                   ▼
+           ┌────────────────┐
+           │ nova-compute   │
+           └────────────────┘
+            ┌──────┬──────┬─────────────┐
+            │ Glance│ Neutron │   Cinder     │
+            └──────┴──────┴─────────────┘
+               ↓       ↓          ↓
+            Image   Network   Volume (optional)
+
+         VM Created via libvirt/KVM
+
+
+###How Nova Components Work Together
+Let's break it down:
+a. nova-api
+    Listens on port 8774
+    Receives API requests like:
+    
+    openstack server create --flavor m1.small ...
+    
+    Validates request with Keystone
+    Sends message to nova-scheduler via RabbitMQ
+
+b. nova-scheduler
+    Receives VM placement request
+    Applies filters and weighers (as explained earlier)
+    Picks a compute node to run the VM
+    Sends the decision to the nova-conductor
+
+c. nova-conductor
+    Acts as a bridge between the database and nova-compute
+    Avoids direct DB access from compute nodes
+    Forwards requests to the selected nova-compute via RabbitMQ
+
+d. nova-compute (on Compute Nodes)
+    Receives instructions to spawn VM
+    Talks to libvirt/KVM, QEMU, or other hypervisors
+    Interacts with:
+        Glance (to pull image)
+        Neutron (to configure network)
+        Cinder (for block storage if needed)
+  - Creates the instance
+
+e. nova-placement-api
+    Provides resource tracking for:
+        CPUs
+        RAM
+        Disk
+    Nova scheduler queries this during scheduling
+    Helps with resource reservations and NUMA topology
+
+f. nova-novncproxy / nova-spicehtml5proxy
+    Provides web console access (e.g., Horizon console tab)
+    Connects user browser → controller → compute host → VM console (via VNC or SPICE)
+
+
+##VM Creation Flow (Step-by-Step Example)
+Command:
+
+openstack server create --flavor m1.small --image ubuntu --network private myvm
+
+Behind the Scenes:
+    CLI → nova-api
+        Authenticated via Keystone
+        API call: POST /servers
+
+    nova-api → nova-scheduler
+        Sends placement request via RabbitMQ
+
+    nova-scheduler
+        Queries placement-api to check resources
+        Applies filters & weighers
+        Picks a compute node
+
+    nova-scheduler → nova-conductor
+        Forwards host selection and scheduling info
+
+    nova-conductor → nova-compute
+        Sends instruction to spawn VM
+
+    nova-compute
+        Downloads image from Glance
+        Creates disk image (qcow2 or raw)
+        Requests network port from Neutron
+        Boots VM via libvirt/KVM
+        Attaches volumes from Cinder if requested
+
+    nova-api
+        Reports instance status back to user
+
+
+
+###Neutron#####################
+##Full Architecture and Components (Detailed)
+Neutron is OpenStack’s networking service. It provides:
+    L2 and L3 networking for instances
+    Floating IPs (NAT)
+    Security groups (firewall)
+    DHCP, DNS, and metadata
+    Integration with physical and virtual networks
+
+
+##NEUTRON COMPONENTS – IN DETAIL
+1) neutron-server
+Role: Central brain of Neutron
+Location: Controller node
+
+Responsibilities:
+    Accepts REST API requests from users or Nova
+    Authenticates via Keystone
+   
+    Talks to:
+        Database (to store networks, subnets, ports)
+        ML2 Plugin
+        RabbitMQ (to talk to agents)
+
+Example:
+openstack network create tenant-net
+
+Note: Request sent to neutron-server
+
+
+1-a)neutron-server ↔ Database (MariaDB/MySQL)
+ -->Purpose:
+To store and retrieve persistent network resources, including:
+    Networks, subnets, ports
+    Routers, floating IPs
+    Agent states
+    Security groups and rules
+
+-->How it works:
+    Neutron uses SQLAlchemy ORM to communicate with the DB.
+    Configured in: /etc/neutron/neutron.conf
+
+[database]
+connection = mysql+pymysql://neutron:password@controller/neutron
+
+Note: Whenever you create or update a Neutron resource (e.g., network), the neutron-server makes a write to the DB.
+
+#Example: Creating a Network
+
+openstack network create tenant-net
+
+    Internally, neutron-server does:
+      Authenticates request (via Keystone)
+      Passes to ML2 plugin
+      ML2 plugin writes a new row in the networks table:
+        --INSERT INTO networks (id, name, project_id, ...) VALUES (...)
+          Subnet creation updates subnets table.
+          Port binding updates ports table.
+
+#Example DB Tables
+Table Name	                                What it stores
+networks	                           Network ID, name, tenant ID
+subnets	                                   IP ranges, gateway, DNS
+ports	                                   Virtual NICs (vNICs) attached to instances
+routers	                                   Virtual routers and their settings
+agents 	                                   Neutron agent heartbeats and types
+
+
+1-b)neutron-server ↔ ML2 Plugin
+-->Purpose:
+To decide how to implement the networking configuration, and pass details to the backend (mechanism drivers).
+
+#How it works:
+    ML2 plugin is loaded by neutron-server.
+    It supports multiple tenant network types and multiple mechanism drivers.
+    Based on configuration in /etc/neutron/plugins/ml2/ml2_conf.ini:
+
+[ml2]
+type_drivers = flat,vlan,vxlan
+tenant_network_types = vxlan
+mechanism_drivers = openvswitch
+
+-->When neutron-server processes a request (e.g., create network), it calls: 
+    
+    ml2_plugin.create_network(context, network_data)
+    
+    The plugin:
+        Validates the request
+        Checks allowed types (e.g., VXLAN)
+        Passes the request to the Mechanism Driver (e.g., OVS)
+
+#Example:
+
+openstack port create --network tenant-net vm-port
+
+➡ Neutron-server:
+   
+    Calls ml2_plugin.create_port(...)                                    (command/syntax)
+   
+    ML2 calls the Open vSwitch mechanism driver
+    The driver does no actual OVS config directly — instead, it returns binding info and instructs an agent via RabbitMQ (next section).
+
+1-b-1)User CLI ➝ Keystone Auth
+  --CLI first authenticates with Keystone.
+  --Receives a token used for the API call:
+
+         POST /v2.0/ports
+         X-Auth-Token: <token>
+
+1-b-2. neutron-server Receives the API Request
+  --It verifies:
+        Auth via Keystone token
+        That the network tenant-net exists
+        That the project has access
+
+  --Then it prepares to create a new port object in the DB.
+
+1-b-3. ML2 Plugin is Invoked
+  --neutron-server calls:
+    
+    ml2_plugin.create_port(context, port_data)
+
+  --ML2 Plugin:
+        Validates the network type (VXLAN/VLAN/flat)
+        Checks port bindings
+        Hands off the request to the mechanism driver (e.g., Open vSwitch)
+
+1-b-4. Mechanism Driver (OVS) Prepares Binding
+  --Called:
+    openvswitch_driver.create_port_precommit(context)
+
+  --This sets:
+        binding:vif_type = 'ovs'
+        binding:host_id = <compute-node>
+        binding:vnic_type = normal
+        binding:profile = {}
+
+-->Called again later:
+
+    openvswitch_driver.create_port_postcommit(context)
+
+1-b-5. neutron-server Inserts into Database
+ --Inserts a row in the ports table:
+
+INSERT INTO ports (id, network_id, mac_address, device_owner, ...) VALUES (...);
+
+1-b-6. neutron-server Notifies the Agent (via RabbitMQ)
+    Sends a notification to:
+
+    q-agent-notifier-port-update.<hostname>                    (command)
+
+    The message contains:
+        Port UUID
+        Network ID
+        Binding info
+        Security groups
+
+1-b-7. neutron-openvswitch-agent Receives Notification
+    The agent runs on the compute node (or wherever the port is expected to be bound).
+
+ -->It listens on RabbitMQ via:
+    
+    consume(queue='q-agent-notifier-port-update.<hostname>')                   (command)
+
+1-b-8. Agent Configures the Port on OVS
+  --Creates a tap interface (e.g., tapabc123)
+  --Plugs it into:
+        br-int bridge (integration bridge)
+
+  --Sets OVS flows for:
+        VXLAN tag
+        Security group rules (via iptables or OVS)
+        QoS (if configured)
+
+     ovs-vsctl add-port br-int tapabc123 ...                          (command)
+
+1-b-9. Agent Reports Back
+-- After plugging the port, the agent sends an RPC call back to neutron-server:
+   
+    port_update()                                                      (command)
+
+ -->neutron-server updates the port status in the DB:
+
+Note: UPDATE ports SET status = 'ACTIVE' WHERE id = <port_id>
+
+#Final Port State
+You can now run:
+
+openstack port show vm-port
+
+And see:
+    status = ACTIVE
+    binding:vif_type = ovs
+    binding:host_id = compute1
+    mac_address, fixed_ips, etc.
+
+Key Communication Paths
+From	           To	                     Via	                        Purpose
+CLI/User	neutron-server	          REST (HTTP)	                       Create port
+neutron-server	DB (MariaDB)	          SQLAlchemy	                       Persist port config
+neutron-server	ML2 + mech driver	  Python call	                       Port binding decision
+neutron-server	OVS agent	          RabbitMQ	                       Notify agent to configure port
+OVS agent	neutron-server	          RPC (MQ)	                       Report port status as ACTIVE
+
+
+1-c)neutron-server ↔ RabbitMQ ↔ Agents
+-->Purpose:
+To asynchronously notify Neutron agents to:
+    Plug ports
+    Setup bridges
+    Create namespaces (router, DHCP)
+
+-->How it works:
+Neutron uses oslo.messaging, an RPC framework built on top of RabbitMQ.
+
+Configuration:
+[DEFAULT]
+transport_url = rabbit://openstack:password@controller
+
+-->Communication Flow:
+    Neutron-server sends a message to RabbitMQ
+    Agent (e.g., neutron-ovs-agent) listens to its own RPC queue
+    Agent picks up the instruction and applies config
+
+-->Example: Port Plugging for a VM
+
+VM boot triggers Nova → Neutron port create
+    Neutron-server processes it
+    Calls ML2 plugin and mechanism driver
+    Driver sends port binding update:
+    self.agent_rpc.update_device_up(...)
+
+-->This sends a message to:
+
+queue = 'q-agent-notifier-port-update'
+topic = 'q-agent-notifier'
+
+➡ neutron-openvswitch-agent (on compute node) receives the message and:
+
+    Creates the tap interface (e.g., tap-xxxx)
+    Plugs it into br-int (OVS integration bridge)
+    Updates port status via MQ back to neutron-server
+
+-->You can monitor RabbitMQ queues with:
+
+rabbitmqctl list_queues
+
+Common queues:
+Queue	                                     Purpose
+q-agent-notifier-port-update	           Port plug/unplug
+q-agent-notifier-network-update	           Bridge updates
+fanout_neutron-ovs-agent	           Broadcast config to all OVS agents
+neutron-rpc-server	                   RPC responses to neutron-server
+
+
+🧠 Summary Table
+Communication	                   Method	                                   Example
+Neutron ↔ DB	                 SQLAlchemy	                         Inserts into ports, networks, etc.
+Neutron ↔ ML2 Plugin	         Python in-process call	                 ml2_plugin.create_port(...)
+Neutron ↔ Agent	         oslo.messaging → RabbitMQ	         Notify agent to plug a port
+
+
+-->Full Flow Recap (Example: Port Creation)
+openstack port create --network tenant-net my-port
+        ↓
+[neutron-server]
+        ↓
+[DB] insert into `ports`
+        ↓
+[ML2 plugin] validates and calls OVS driver
+        ↓
+[RabbitMQ] sends message to neutron-openvswitch-agent
+        ↓
+[Agent on compute node] creates vNIC and plugs it into OVS
+        ↓
+[Agent → neutron-server] reports back "port is ACTIVE"
+
+
+2)ML2 Plugin (Modular Layer 2 Plugin)
+Role: Framework to support multiple networking technologies
+Location: Loaded inside neutron-server
+
+-->How it works:
+    Receives config from neutron.conf and ml2_conf.ini
+    Delegates real backend config to Mechanism Drivers (like Open vSwitch or Linux Bridge)
+
+[ml2]
+type_drivers = flat,vlan,vxlan
+mechanism_drivers = openvswitch
+tenant_network_types = vxlan
+
+
+3)Mechanism Drivers (e.g., OVS)
+Role: Implements how actual networking is done
+
+Examples:
+    openvswitch: Uses OVS bridges and VXLAN tunnels
+    linuxbridge: Uses Linux bridges and VLANs
+    sriovnicswitch: For SR-IOV NICs
+
+➡ Mechanism drivers generate instructions that go to Neutron Agents (via MQ)
+
+
+4)RabbitMQ
+Role: Messaging layer between neutron-server and Neutron agents
+
+How:
+    neutron-server sends instructions (e.g., create a port) to an agent queue
+    Agent (like neutron-openvswitch-agent) processes it locally
+
+
+5)neutron-openvswitch-agent (or neutron-linuxbridge-agent)
+Role: Applies low-level L2 networking on compute/network nodes
+Location: Runs on each compute and network node
+
+-->What it does:
+    Sets up:
+        Tap interfaces
+        OVS bridges (br-int, br-tun, br-ex)
+        VXLAN tunnels or VLANs
+    Plugs VM ports into br-int
+    Maps Neutron ports to actual Linux interfaces
+
+-->Communication:
+    Listens on RabbitMQ for events
+    Updates OVS flows dynamically
+
+
+6)neutron-dhcp-agent
+Role: Provides DHCP for tenant subnets
+Location: Network node(s)
+
+-->How it works:
+    Launches a dnsmasq service inside a Linux network namespace for each subnet
+    Assigns IPs from the subnet to instances
+    Responds to DHCP requests from instances
+
+Example:
+    Tenant network tenant-net with subnet 10.0.0.0/24
+    → DHCP agent spawns dnsmasq for that subnet
+
+
+7)neutron-l3-agent
+Role: Handles L3 routing, SNAT, floating IPs
+Location: Network node (or all nodes if DVR enabled)
+
+-->What it does:
+    Creates router namespaces
+    Configures iptables rules for:
+        Routing between tenant subnets
+        NAT for floating IPs
+    Handles external gateway to provider networks
+
+-->Example:
+openstack router create my-router
+openstack router add subnet my-router my-subnet
+
+Note: Creates a qrouter-<uuid> namespace and routes traffic
+
+
+8)neutron-metadata-agent
+Role: Delivers cloud-init metadata to VMs
+Location: Runs on network nodes
+
+-->How it works:
+    Forwards VM requests to the Nova metadata service
+    Required when instances request:
+    http://169.254.169.254/
+
+-->Example:
+    VM wants to get hostname and SSH keys → hits metadata agent
+    Agent forwards to Nova metadata API via Unix socket
+
+
+
+9)Open vSwitch (OVS)
+Role: Virtual switch for bridging, tunneling, and security
+Location: Compute/network nodes
+
+-->Works with:
+    neutron-openvswitch-agent to:
+        Create bridges (br-int, br-ex, br-tun)
+        Configure VXLAN tunnels
+        Apply security group rules (via OpenFlow)
+
+
+
+########What is Open vSwitch (OVS)?##############detailed
+Open vSwitch is a virtual switch — a software implementation of a network switch — designed to work in virtualized environments (like OpenStack, KVM, etc.).
+It enables Layer 2 and Layer 3 switching inside the host system and supports features like:
+    VLANs, VXLAN tunneling
+    Port mirroring, flow control
+    Security groups (via flow rules)
+    SDN (OpenFlow) integration
+
+
+#Why OpenStack Uses OVS
+In OpenStack, OVS is used to:
+    Connect virtual machines (VMs) to each other
+    Connect VMs to external networks
+    Enforce network isolation (using VXLAN, VLAN)
+    Apply firewall/security group rules (via OpenFlow)
+    Enable overlay networking between compute nodes
+
+
+#Key Concepts of OVS in OpenStack
+Component	                                             Purpose
+br-int (Integration Bridge)	                      Central bridge where VMs plug in
+br-tun (Tunnel Bridge)	                              Handles VXLAN or GRE tunnels between compute nodes
+br-ex (External Bridge)	                              Bridge to the external physical network (provider access)
+Tap Interfaces (e.g., tapabc123)	              Represent the VM’s virtual NIC
+Patch Ports	                                      Internal virtual links between bridges
+
+
+#OVS in a Compute Node
+       [ VM ]
+         |
+     [ tap123 ]
+         |
+     [ br-int ] <--> [ br-tun ] <-- VXLAN tunnel --> [ other compute node ]
+         |
+      patch-int
+         |
+     [ br-ex ] <---> eth0 --> Provider network
+     
+     
+#How OVS Works in OpenStack
+1. VM Boot Process
+When a VM boots:
+    Nova-compute calls Neutron to allocate a port.
+    Neutron instructs neutron-openvswitch-agent to:
+    
+        Create a tap interface for the VM (tap123)
+        Add it to the br-int bridge
+
+-->ovs-vsctl add-port br-int tap123
+
+2. Tenant Isolation with VXLAN
+If tenant networks are overlay networks (VXLAN):
+    Each compute node connects to others using br-tun
+    OVS adds VXLAN tunnels dynamically based on remote compute nodes
+    Each VM’s traffic is encapsulated with a VXLAN header
+    Ensures tenant isolation
+
+        ovs-vsctl show
+
+--Will show VXLAN tunnels like:
+  Port vxlan-0a0a0a02
+     Interface vxlan-0a0a0a02
+     type: vxlan
+     options: {remote_ip="10.10.10.2", key="flow"}
+
+3. Floating IP or External Access
+To access public or provider network:
+    Neutron sets up br-ex with an interface like eth1
+    A router namespace on the network node does NAT
+    Traffic goes from br-int → br-ex → physical NIC → external world
+
+4. Security Groups
+    Neutron applies firewall rules using:
+        iptables in LinuxBridge
+        OpenFlow rules in OVS
+
+#Example: allow only TCP 22 for SSH
+
+ovs-ofctl dump-flows br-int
+
+Shows:
+
+nw_proto=6,tp_dst=22 actions=allow
+
+5. L2 & L3 Flow Control
+OVS can do:
+    MAC learning (like a real switch)
+    Static flow entries
+    Integration with SDN controllers (via OpenFlow)
+    
+    
+    
+#Summary of OVS in OpenStack
+Role	                                           Description
+Virtual Switch	                         Connects VMs to the OpenStack virtual network
+L2 Switching	                         Handles MAC forwarding between VMs
+VXLAN Tunnels	                         Allows tenant isolation and cross-node communication
+Security Groups	                         Enforces rules via OpenFlow
+External Access	                         Connects to the provider via br-ex
+High Speed	                         Kernel-space forwarding, hardware offload support (DPDK, SR-IOV)
+    
+#exmple
+##What Happens When a VM Sends a Packet
+ -->VM sends a packet via eth0 → hits tap123
+    tap123 is connected to br-int
+
+ -->OVS checks OpenFlow rules:
+        Apply security group rules
+        Determine destination (local VM or remote compute)
+
+ -->If destination is remote:
+        Send through VXLAN tunnel via br-tun
+
+ -->If external:
+        Forward to br-ex and out through physical NIC    
+        
+        
+-->diagram         
++---------+                            +---------+
+|   VM    |                            |   VM    |
++----+----+                            +----+----+
+     |                                      |
+ [tap123]                              [tap456]
+     |                                      |
++----v----+                            +----v----+
+| br-int  |<-------------------------->| br-int  |
++----+----+         VXLAN Tunnel      +----+----+
+     |           (encapsulated L2)         |
+[patch-int]                           [patch-int]
+     |                                      |
++----v----+                            +----v----+
+| br-ex   |                            | br-ex   |
++----+----+                            +----+----+
+     |                                      |
+  [eth0]                                 [eth0]
+     |                                      |
+     +------------ Provider Network --------+
+     
+     
+     
+     
+###How neutron assign ip############
+-->When Is an IP Assigned?
+IPs are assigned in two cases:
+    Automatically (via DHCP) when an instance boots
+    Manually, when you pre-create a Neutron port with a fixed IP
+
+#Step-by-Step: IP Assignment by Neutron
+Let’s walk through what happens internally.
+
+1. Subnet is created
+openstack subnet create \
+  --network demo-net \
+  --subnet-range 10.0.0.0/24 \
+  demo-subnet
+
+ -->This defines an IP pool from which Neutron will assign IPs:
+    Start of pool: usually .2
+    Gateway IP: typically .1
+    DNS server: optional (--dns-nameserver)
+
+-Stored in DB under subnets and ipallocations.
+
+2.Instance is launched
+openstack server create --network demo-net my-vm
+    Nova calls Neutron to allocate a port
+    
+ --> Neutron:
+        Allocates a MAC address
+        Allocates a free IP address from the 10.0.0.0/24 pool
+        Saves this info in ports and ipallocations tables
+
+#Example:
+Port: fa:16:3e:12:34:56
+IP:   10.0.0.5
+
+3.DHCP Agent is Notified
+    neutron-server sends a message via RabbitMQ to the neutron-dhcp-agent
+    Agent receives:
+        Subnet info
+        Port info (MAC, IP)
+
+    DHCP Agent:
+        Creates a Linux network namespace (e.g., qdhcp-<net-id>)
+        Spawns a dnsmasq process inside that namespace
+        Writes a host entry like:
+
+/etc/neutron/dnsmasq/hostfile
+fa:16:3e:12:34:56,10.0.0.5
+
+4.VM boots and sends DHCPDISCOVER
+    The VM sends a DHCP request inside its tenant network
+    This reaches the dnsmasq inside the qdhcp- namespace
+    dnsmasq responds with:
+        IP address
+        Gateway
+        DNS server
+        Lease time
+
+dnsmasq: DHCPACK(eth0) 10.0.0.5 fa:16:3e:12:34:56 my-vm
+
+5.IP Lease and Renewal
+    Lease is temporary (default: 86400 seconds)
+    VM will renew the lease periodically
+    The assigned IP is reserved in Neutron DB until port is deleted
+
+
+-->Static IP Assignment (Optional)
+You can also create a port and assign a fixed IP manually:
+openstack port create \
+  --network demo-net \
+  --fixed-ip subnet=demo-subnet,ip-address=10.0.0.100 \
+  my-port
+
+-->Then boot a VM using that port:
+openstack server create --port my-port my-vm
+
+Note: This bypasses DHCP for IP allocation, but still uses DHCP for delivery.
+
+-->Behind the Scenes: Neutron Tables Involved
+Table	                                     Purpose
+ports	                               Contains MAC, IP, and device info
+ipallocations	                       Tracks which IPs are in use
+subnets	                               Subnet CIDRs, gateways, DNS
+networks	                       Virtual L2 networks
+agents	                               DHCP agent health and hostnames
+
+
+#Security Group Note
+When IPs are assigned and ports created, Neutron also applies security group rules (e.g., allow DHCP traffic):
+
+iptables -L | grep 67
+UDP port 67 (DHCP server) and port 68 (DHCP client) must be open.
+
+
+#Where is dnsmasq?
+ip netns
+# qdhcp-xxxxxx  → DHCP namespace
+sudo ip netns exec qdhcp-xxxxxx ps aux | grep dnsmasq
+
+-->Config and leases stored in:
+/var/lib/neutron/dhcp/<net-id>/host
+/var/lib/neutron/dhcp/<net-id>/leases
+
+#Summary Table
+Step	       Component	                       Action
+1	     neutron-server	                   Allocates IP and MAC
+2	     neutron-dhcp-agent 	           Starts dnsmasq in netns
+3	     dnsmasq	                           Serves IP to VM 
+4	     neutron DB	                           Tracks assigned IPs
+5	     VM	                                   Requests IP via DHCP
+
+
+#+---------------------+
+|    OpenStack User   |
+|  (CLI/API Request)  |
++----------+----------+
+           |
+           v
++----------------------+
+|  neutron-server      |
+|  - Validates request |
+|  - Allocates IP from |
+|    subnet pool       |
++----------+-----------+
+           |
+           v
++-------------------------+
+| neutron-dhcp-agent      |
+| - Listens via RabbitMQ  |
+| - Spawns dnsmasq        |
+|   in a namespace        |
++----------+--------------+
+           |
+           v
++-----------------------------+
+|  Linux Network Namespace    |
+|   (e.g., qdhcp-<net-id>)    |
+| - dnsmasq listens on tapX   |
+| - Has IP: subnet's gateway  |
++----------+------------------+
+           |
+           v
++------------------------+
+|   VM Booting (DHCP)    |
+| - Sends DHCPDISCOVER   |
+| - Receives DHCPOFFER   |
+| - Uses IP from subnet  |
++------------------------+
+
+
+
+
+#####What is a Security Group?##############
+A Security Group (SG) in OpenStack is a virtual firewall attached to instances (VMs).
+It controls inbound and outbound traffic at the port level (L2/L3), using iptables or Open vSwitch flows, depending on the backend.
+
+
+#Key Characteristics
+Feature	                                        Description
+Default-Deny	                        All traffic is denied unless explicitly allowed
+Port-Based	                        Applied to Neutron ports, not to entire networks
+Ingress/Egress Rules	                Separate rules for incoming and outgoing traffic
+Stateless by Default	                Each direction needs to be allowed unless using "stateful" mode
+Implements iptables / OpenFlow	        Depending on backend (LinuxBridge or OVS)
+
+
+#How It Works
+📥 When You Launch an Instance
+    Neutron assigns the VM a port.
+    Security groups (SGs) are attached to the port.
+    The neutron-openvswitch-agent or neutron-linuxbridge-agent:
+        Fetches SG rules from the database via RabbitMQ.
+
+   -->Converts them into:
+            iptables rules (LinuxBridge)
+            OpenFlow rules (OVS)
+
+Note: These firewall rules are enforced on the compute node.
+
+#Example
+Create a Security Group:
+
+openstack security group create allow-ssh                       (command)
+
+-->Add a Rule to Allow SSH:
+openstack security group rule create \
+  --protocol tcp --dst-port 22 \
+  --ingress allow-ssh
+
+-->Launch a VM with This SG:
+openstack server create \
+  --image ubuntu \
+  --flavor m1.small \
+  --security-group allow-ssh \
+  --network demo-net vm1
+
+-->Behind the Scenes
+In the Neutron Database:
+    securitygroups table stores group metadata
+    securitygrouprules table stores port/protocol/remote IP rules
+    Port ↔ SG mapping is stored in securitygroupportbindings
+
+-->What Happens on Compute Node
+If you're using LinuxBridge:
+sudo iptables -L -n -v | grep 22
+
+Example rules:
+ACCEPT     tcp  --  0.0.0.0/0            10.0.0.5        tcp dpt:22
+
+-->If you're using Open vSwitch:
+
+sudo ovs-ofctl dump-flows br-int                (command)
+
+Note:Shows OpenFlow rules enforcing SG behavior.
+
+
+#Diagram Layout: Security Group Flow
++-------------------+
+|  openstack CLI    |
+| openstack server  |
++--------+----------+
+         |
+         v
++----------------------+
+| neutron-server       |
+| - Assigns port       |
+| - Applies SG         |
++--------+-------------+
+         |
+         v
++--------------------------+
+| neutron-agent (compute) |
+| - Converts SG to rules  |
+| - Applies via iptables  |
+|   or OVS flow tables    |
++----------+--------------+
+           |
+           v
++----------------------------+
+| VM port (tap-abc123)       |
+| - Inbound traffic filtered |
+| - Outbound traffic filtered|
++----------------------------+
+
+
+-->Summary Table
+Component	                          Role
+neutron-server	                      Accepts SG rules via API
+neutron-db	                      Stores rules and port associations
+neutron-agent	                      Applies rules to VMs (via iptables or OVS)
+nova-compute	                      Boots the VM with associated port+SG
+iptables/OVS	                      Enforces the rules in host OS
+
+
+
+####Public and floating ip##############
+A Floating IP is a public (external) IP address that is dynamically mapped to a private IP of a virtual machine (VM) in OpenStack.
+--It enables your internal (private) instance to be accessible from outside (Internet) using NAT (Network Address Translation).
+
+
+#Key Concepts & Terms
+Term	                                      Description
+Private IP	                       The IP from the internal tenant network (e.g., 10.0.0.5)
+Floating IP	                       A public IP (e.g., 192.168.1.200) from an external network
+Router	                               Connects internal networks to external networks; performs SNAT/DNAT
+NAT (Network Address Translation)      Translates between floating (public) and fixed (private) IPs
+Gateway                                External network interface of the router (used for outbound/inbound access)
+
+
+#Step-by-Step Flow of Floating IPs
+Step 1: Create Internal Network and Subnet
+
+#openstack network create internal-net
+#openstack subnet create --network internal-net \
+  --subnet-range 10.0.0.0/24 internal-subnet
+    
+    This is your tenant network.
+    VMs will get private IPs like 10.0.0.5
+
+Step 2: Create External Network and Subnet
+
+openstack network create public-net \
+  --external --provider-physical-network provider \
+  --provider-network-type flat
+
+openstack subnet create --network public-net \
+  --subnet-range 192.168.1.0/24 \
+  --no-dhcp --gateway 192.168.1.1 public-subnet
+
+    This network bridges to your physical network.
+    Floating IPs will be allocated from 192.168.1.0/24
+
+Step 3: Create a Router and Connect Networks
+
+openstack router create demo-router
+
+# Set external gateway
+
+openstack router set demo-router --external-gateway public-net
+
+# Connect tenant network to router
+
+openstack router add subnet demo-router internal-subnet
+
+    Router does SNAT: allow VMs to access internet
+    Router also does DNAT: maps floating IP to private IP for incoming connections
+
+Step 4: Launch a VM in the Internal Network
+
+openstack server create \
+  --flavor m1.small \
+  --image ubuntu \
+  --network internal-net \
+  --security-group default \
+  demo-vm
+
+    VM gets a private IP, e.g., 10.0.0.5
+    No external access yet.
+
+Step 5: Allocate and Associate a Floating IP
+
+openstack floating ip create public-net
+
+Output:
++---------------------+------------------+
+| Floating IP Address | 192.168.1.200    |
+| Fixed IP Address    | None             |
++---------------------+------------------+
+
+-->Then associate:
+openstack server add floating ip demo-vm 192.168.1.200
+
+Now:
+    192.168.1.200 (public) is mapped to 10.0.0.5 (private)
+    NAT is handled by qrouter namespace
+
+
+#Internal Working (What Actually Happens)
+
+-->Neutron Router Namespace (qrouter-xxxx)
+-->Acts as a virtual router using Linux namespaces
+    Has:
+        One interface on internal subnet (10.0.0.1)
+        One interface on external network (192.168.1.2)
+
+-->Uses iptables DNAT and SNAT to map between IPs
+
+Run:
+
+ip netns exec qrouter-xxx iptables -t nat -L -n -v                             (command)
+
+-->You’ll see:
+DNAT       tcp  --  anywhere    anywhere    to:10.0.0.5
+SNAT       all  --  10.0.0.0/24 anywhere    to:192.168.1.200
+
+
+#Floating IP Flow Diagram (Layout – for notes)
++-----------------------------+
+|        Internet / LAN       |
+|  (Floating IP: 192.168.1.200)|
++-------------+---------------+
+              |
+              v
+    [ External Bridge (br-ex) ]
+              |
+              v
+     [ qrouter Namespace (NAT) ]
+   +----------------------------+
+   | 192.168.1.2 (gateway)      |
+   | 10.0.0.1 (internal subnet) |
+   | iptables DNAT/SNAT         |
+   +-------------+--------------+
+                 |
+                 v
+     [ tapXYZ123 / br-int ]  (VM's port)
+                 |
+                 v
+             [   VM   ]
+           10.0.0.5 (private)
+
+
+#Firewall + Floating IPs
+Ensure security group allows ingress on relevant port (e.g., port 22 for SSH):
+
+openstack security group rule create \
+  --protocol tcp --dst-port 22 --ingress default
+
+-->Otherwise, floating IP is assigned but traffic is blocked.
+
+
+
+
+###Storage Types in OpenStack######
+Type	                    Description	                                                      Backend
+Ephemeral	         Temporary disk tied to VM lifecycle	                         Nova compute node
+Volume (Block)	         Persistent block storage (can detach/reattach)	                 Cinder backend (e.g. Ceph, LVM, NFS, iSCSI)
+
+
+##What is Ephemeral Storage?
+Ephemeral = "short-lived"
+This is temporary storage created with the VM instance and destroyed when the instance is deleted.
+✅ Key Characteristics:
+    Comes from the Nova compute host's local disk (or Ceph if configured)
+    Created automatically when the instance boots
+    Lost when VM is deleted, terminated, or crashes
+    Used as the root disk if no volume is booted
+
+Example:
+openstack server create --image ubuntu --flavor m1.small --network private-net vm1
+    A new ephemeral root disk is created on the Nova compute node
+    Root filesystem is stored here (e.g., /, /home, /var)
+
+If you delete vm1, its disk is gone.
+
+
+##What is a Volume (Block Storage)?
+Volume = Persistent storage
+This is managed by the Cinder service and is independent of VM lifecycle.
+ 
+#Key Characteristics:
+    Survives VM deletion
+    Can be attached/detached from multiple instances
+    Can be created empty or from an image/snapshot
+    Often backed by Ceph RBD, LVM, or other storage backends
+
+#Example:
+openstack volume create --size 10 my-vol
+openstack server create \
+  --flavor m1.small \
+  --block-device source=volume,id=<vol-id>,dest=volume,bootindex=0 \
+  --network private-net vm2
+
+-->VM vm2 boots from Cinder volume
+-->If vm2 is deleted, volume my-vol remains
+
+-->Internally...
+Ephemeral:
+    Stored in /var/lib/nova/instances/ on compute node
+    Managed by Nova compute
+    Uses qcow2 or raw disk images
+
+Volume:
+    Managed by Cinder (via backend drivers)
+    Uses RBD, LVM, or others
+    Attached to VM via iSCSI, NBD, or RBD
+
+
+##Diagram Layout (for Notes)
++---------------------------+
+|       OpenStack VM        |
++---------------------------+
+| /dev/vda  (Ephemeral Disk)|
+| -> Nova Compute Host      |
+| -> Deleted with VM        |
++---------------------------+
+
++---------------------------+
+|       Cinder Volume       |
++---------------------------+
+| /dev/vdb (Attached Volume)|
+| -> Cinder Backend (Ceph)  |
+| -> Persistent after delete|
++---------------------------+
+
+
+#Summary Table
+Feature	                       Ephemeral	                   Volume
+Created by	                Nova	                            Cinder
+Lifespan	            Tied to VM lifecycle	           Persistent across reboots
+Attach/Detach	            Not supported	                   Yes
+Can boot from	            Yes	                                   Yes
+Resides on	            Compute host disk	                   Storage backend (e.g. Ceph)
+Backed by	            Local disk or Ceph	                   Ceph, iSCSI, NFS, LVM
+
+
+
+##What is a Cinder Backend?
+A Cinder backend is the underlying storage system that Cinder uses to provision and manage volumes.
+Each backend is configured in cinder.conf and may use a driver for technologies like:
+    Ceph (RBD)
+    iSCSI targets
+    LVM
+    NFS
+    Fibre Channel
+    NetApp, Dell EMC, HPE 3PAR, etc.
+
+You can configure one or many backends (called multi-backend setup).
+
+#Common Cinder Backends (Detailed Overview)
+
+1. ✅ Ceph RBD (RADOS Block Device)
+Description: Distributed, fault-tolerant object store used as a block storage backend.
+Driver: rbd
+
+How it works:
+    Volumes are RBD images in a Ceph pool
+    Cinder communicates with Ceph using the librbd API
+    Compute nodes attach volumes via native RBD protocol (no iSCSI)
+
+Pros:
+    Fully distributed and highly available
+    Supports snapshots and clones efficiently
+    Great performance and scalability
+
+Example config:
+[cinder-ceph]
+volume_driver = cinder.volume.drivers.rbd.RBDDriver
+rbd_pool = volumes
+rbd_ceph_conf = /etc/ceph/ceph.conf
+rbd_user = cinder
+backend_host = ceph
+volume_backend_name = cinder-ceph
+
+Use Case: Enterprise production, OpenStack clusters with Ceph backend, Kolla-Ansible deployments.
+
+#iSCSI (with LVM)
+Description: Uses LVM on local disks (e.g., /dev/sdb) and exposes volumes via iSCSI targets.
+Driver: lvm
+
+#How it works:
+    Cinder creates LVM logical volumes on the host
+    Exposes them as iSCSI devices to compute nodes
+    Compute nodes attach via iSCSI initiator
+
+->Pros:
+    Easy to set up
+    No external storage needed
+    Good for testing/lab
+
+->Cons:
+    Not highly available
+    Single point of failure
+
+Example config:
+[lvm-backend]
+volume_driver = cinder.volume.drivers.lvm.LVMVolumeDriver
+volume_group = cinder-volumes
+iscsi_protocol = iscsi
+iscsi_helper = tgtadm
+volume_backend_name = lvm-backend
+
+Use Case: Small test labs, PoC, non-production OpenStack nodes.
+
+
+#NFS (Network File System)
+Description: Uses a remote NFS share to store volume images as files.
+Driver: nfs
+
+->How it works:
+    Cinder mounts an NFS share (e.g., from NetApp, NAS)
+    Each volume is a file in that NFS export
+    Hypervisor accesses via loop devices or remote mounting
+
+->Pros:
+    Easy integration with NAS
+    No need for block storage setup
+
+->Cons:
+    No native snapshots or clone support (unless vendor-specific)
+    Performance dependent on NFS server
+
+Example config:
+[nfs-backend]
+volume_driver = cinder.volume.drivers.nfs.NfsDriver
+nfs_shares_config = /etc/cinder/nfs_shares
+volume_backend_name = nfs-backend
+
+Use Case: Organizations already using NFS/NAS, easy to integrate.
+
+
+#Fibre Channel (FC)
+Description: Uses enterprise SAN storage that supports Fibre Channel protocol.
+Driver: Varies by vendor (e.g., cinder.volume.drivers.ibm.storwize_svc, cinder.volume.drivers.hpe.hpe_3par_fc)
+
+->How it works:
+    Cinder driver manages SAN LUNs
+    FC switch zoning ensures compute hosts can access LUNs
+    Volumes are mapped directly to VMs as block devices
+
+->Pros:
+    High performance and throughput
+    Enterprise-grade
+
+->Cons:
+    Expensive infrastructure
+    Complex FC zoning
+    
+Use Case: Enterprises with existing SAN infrastructure.
+
+
+#Backend Diagram Layout (for notes)
++--------------------------+
+|      OpenStack API       |
++-----------+--------------+
+            |
+            v
++--------------------------+
+|       Cinder-Volume      |
++-----+-----------+--------+
+      |           |
+      |           |
++-----v--+     +--v--------+
+|  LVM   |     |  Ceph RBD |
+| (iSCSI)|     |           |
++--------+     +-----------+
+
++--------+     +-----------+
+|  NFS   |     | Fibre Ch. |
+|  NAS   |     |   SAN     |
++--------+     +-----------+
+
+
+
+##What Is Cinder?
+Cinder is the Block Storage service in OpenStack. It provides persistent storage volumes that you can attach to virtual machines. Volumes can be created, attached, detached, and even booted from.
+
+#Cinder Architecture: Major Components
+Component	                                        Role
+cinder-api	                                 Exposes REST API to users/services
+cinder-scheduler	                         Chooses the right backend/host for the volume
+cinder-volume	                                 Main service managing volumes on storage backend
+cinder-backup	                                 Manages backup/restore of volumes
+cinder-db (MariaDB)	                         Stores volumes, snapshots, and metadata
+cinder.conf	                                 Core configuration file for drivers/backends
+Message Bus (RabbitMQ)	                         Connects Cinder services asynchronously
+Storage Backend	                                 LVM, Ceph, NFS, etc. for actual data
+
+-->Communication Overview
+     User CLI/API
+             ↓
+     cinder-api
+            ↓ REST API calls
+     cinder-scheduler
+            ↓ via RPC (RabbitMQ)
+     cinder-volume
+            ↓ via drivers
+     Storage Backend (LVM/Ceph/etc.)
+     
+
+# Detailed Explanation of Each Cinder Component 
+1)cinder-api
+Role:
+    Listens for HTTP/REST API requests from users or other services (Nova).
+    Converts those into RPC calls and forwards them via RabbitMQ.
+
+Example Call:
+
+openstack volume create --size 10 my-vol
+
+This hits the cinder-api service, which validates and passes it to the cinder-scheduler.
+Responsibilities:
+    Validate parameters
+    Enforce quotas
+    Authenticate via Keystone
+    Communicate with DB and other components
+
+2)cinder-scheduler
+Role:
+    Decides where to create the volume (which backend/host) based on filters.
+
+->Example:
+Volume type = fast-ceph → scheduler picks the Ceph backend
+
+->Scheduling Filters:
+    CapacityAvailableFilter
+    VolumeBackendFilter
+    CapabilitiesFilter
+
+->Workflow:
+    Gets request via RPC from cinder-api
+    Queries DB for backend capabilities
+    Picks suitable host/backend
+    Sends command to cinder-volume service on that host
+    
+3)cinder-volume
+->Role:
+    The core service that manages the lifecycle of volumes
+    Talks directly to the storage backend driver (LVM, Ceph, etc.)
+
+->Tasks:
+    Create/Delete volumes
+    Create snapshots
+    Clone volumes
+    Attach/detach to instances (via Nova)
+
+->Driver Examples:
+    cinder.volume.drivers.lvm.LVMVolumeDriver
+    cinder.volume.drivers.rbd.RBDDriver (for Ceph)
+  
+
+4)cinder-backup (Optional)
+Role:
+    Provides volume backup/restore functionality to external storage
+
+Features:
+    Supports backing up to Swift or other configured backends
+    Can do incremental or full backups
+    Operates asynchronously via RabbitMQ
+
+
+5)cinder-db (MariaDB)
+Role:
+    Stores all metadata:
+        Volume status
+        Host info
+        Backend capabilities
+        Snapshots
+        Quotas
+        Attachments
+
+6)RabbitMQ (Message Queue)
+Role:
+    All internal Cinder components communicate asynchronously via RabbitMQ.
+
+Messages:
+    volume.create_volume
+    scheduler.schedule_create_volume
+    backup.create_backup
+
+
+#How Cinder Interacts with Other OpenStack Services
+Service	                                      Integration Details
+Nova	                                 To attach/detach block devices to VMs
+Glance	                                 To create volumes from images or save volumes as images
+Keystone	                         For authentication and service discovery
+Neutron	                                 Not direct, but indirectly via boot-from-volume setups
+Horizon	                                 Web UI interacts via cinder-api
+Ceph	                                 As storage backend using RBD driver
+
+
+##Example Workflow: Create a Volume
+Step-by-step:
+    User runs:
+openstack volume create --size 10 --type fast-ceph my-vol
+
+    Cinder API:
+        Authenticates via Keystone
+        Validates input
+        Creates DB record
+        Sends RPC call to scheduler
+
+    Cinder Scheduler:
+        Picks Ceph backend based on volume type
+        Sends RPC to cinder-volume on matching host
+
+    Cinder Volume:
+        Loads RBD driver
+        Connects to Ceph
+        
+        Creates a 10GB RBD image named volume-<UUID>
+
+    Volume Created:
+        Status changes to available in DB
+        Volume can now be attached to a VM
+
+
+#############example workflow of cinder-api#####################
+Step-by-Step Workflow: How cinder-api Works
+
+1)Receives the HTTP Request
+    The user (or OpenStack CLI/Horizon) sends an HTTP POST request to the Cinder API endpoint:
+
+       POST /v3/volumes
+
+->The payload includes:
+    {
+      "volume": {
+        "size": 10,
+        "name": "my-vol",
+        "volume_type": "fast-ceph"
+      }
+    }
+
+Note: This hits the cinder-api Python WSGI service (/usr/bin/cinder-api) typically running behind Apache (mod_wsgi) or gunicorn.
+
+2)Keystone Authentication
+    The request includes an authentication token (from openstack RC file or Horizon).
+    
+    The API middleware (keystonemiddleware.auth_token) validates this token by calling:
+       GET /v3/auth/tokens
+       against the Keystone API.
+
+    If valid:
+        The user is authenticated.
+        The request context (user_id, project_id, roles) is set.
+
+3. Authorization & Quota Enforcement
+    The request is checked against policy rules in /etc/cinder/policy.yaml:
+    
+        Example: Is the user allowed to create a volume?
+
+ -->It checks tenant quotas in the quotas table:
+        Does the user have enough quota for:
+            Volume count?
+            Total GB?
+
+    If over quota → HTTP 413 error.
+
+4. Input Validation
+    The API checks:
+        Is the size a valid positive number?
+        Is the requested volume type fast-ceph available?
+        Is the name valid?
+        Are all required fields provided?
+
+5. Create Initial DB Entry
+    After successful validation, a new volume entry is added to the Cinder database (volumes table) via sqlalchemy.
+ 
+    Fields set:
+        status = creating
+        name = my-vol
+        project_id, user_id, volume_type_id, etc.
+        host = NULL (not yet scheduled)
+
+    INSERT INTO volumes (id, name, size, status, volume_type_id, project_id, user_id, ...) VALUES (...);
+
+6. Prepares Request for RPC
+    cinder-api prepares an RPC message (using Oslo messaging) to invoke:
+    scheduler_rpcapi.create_volume(...)
+    This is sent via RabbitMQ with topic cinder-scheduler.
+    
+    The message includes:
+        Volume ID
+        Volume type
+        Size
+        Request context
+
+7. RPC Sent to Scheduler
+    RabbitMQ handles the message delivery.
+    The scheduler listens on topic cinder-scheduler and processes the request.
+
+✅ At This Point:
+    The volume is registered in the DB (status: creating)
+    cinder-api returns a response to the user:
+    {
+      "volume": {
+        "id": "UUID",
+        "status": "creating",
+        "size": 10,
+        ...
+      }
+    }
+
+->The rest of the flow (volume creation on storage) is now handled by:
+    cinder-scheduler → picks host
+    cinder-volume → talks to backend and creates the actual volume
+    DB is updated to reflect available status
+
+
+###########example workflow of cinder-scheduler#########
+Step-by-Step: How cinder-scheduler Works
+
+Step 1: Receives RPC from cinder-api
+    cinder-api sends a message to the scheduler queue:
+   
+    scheduler_rpcapi.create_volume(...)
+   
+ -->This message is placed in RabbitMQ on the topic: cinder-scheduler.
+
+Step 2: Scheduler Gets Volume Request
+    The cinder-scheduler service receives the request via Oslo Messaging (RabbitMQ).
+    It gets:
+        Volume ID
+        Volume type (fast-ceph)
+        Requested size
+        Project/user context
+        Availability zone (optional)
+
+Step 3: Scheduler Queries volume_types Table
+    It reads volume type properties:
+        volume_backend_name = cinder-ceph
+
+Example:
+
+      SELECT extra_specs FROM volume_types WHERE name='fast-ceph';
+
+->These specs guide the scheduler on which backend matches.
+
+Step 4: Host Filtering (FilterScheduler)
+Now it uses the FilterScheduler, which runs:
+    Host Manager builds a list of available cinder-volume hosts and backends (e.g., from host_backend_capabilities table).
+    Filters are applied (like a funnel):
+
+#Common Filters:
+Filter	                                           Function
+AvailabilityZoneFilter	                      Ensures volume is placed in the requested AZ
+CapacityFilter	                              Only includes hosts with enough free space
+VolumeBackendFilter	                      Matches volume_backend_name from volume type
+CapabilitiesFilter	                      Custom feature matching (e.g., SSD, replication)
+
+Example:
+    Host A: volume_backend_name=cinder-lvm, free 5GB → ❌
+    Host B: volume_backend_name=cinder-ceph, free 100GB → ✅
+
+Step 5: Weighing (Scoring)
+After filtering, the scheduler ranks the candidates using weighers.
+
+Example Weighers:
+Weigher	                                    Purpose
+CapacityWeigher	                         Prefer hosts with more free space
+VolumeNumberWeigher	                 Prefer hosts with fewer volumes
+
+->Each host gets a score, and the highest-scoring host wins.
+
+Step 6: Scheduler Picks the Best Host
+Suppose Host ceph1@rbd is chosen.
+Scheduler now calls the Volume RPC API:
+
+volume_rpcapi.create_volume(...)
+
+  -->This is another RPC message sent to the queue of the cinder-volume service running on that backend host.
+
+Step 7: Host Updates the DB Record
+Before returning, the scheduler updates:
+
+UPDATE volumes SET host='ceph1@rbd', status='creating' WHERE id=...
+
+->This ensures cinder-volume knows where to process the task.
+
+
+##############example work flow of cinder-volume#################
+What is cinder-volume?
+cinder-volume is the core worker of the Cinder service.
+It receives tasks via RPC, talks to the backend driver, and manages volumes, snapshots, and attachments.
+
+#Step-by-Step Workflow: How cinder-volume Works
+✅ Step 1: Receives RPC Request
+    The cinder-scheduler sends an RPC to the correct cinder-volume host:
+
+         volume_rpcapi.create_volume(...)
+
+This is delivered over RabbitMQ, and cinder-volume is subscribed to a topic like:
+    cinder-volume.<host>
+    
+    The RPC includes:
+        Volume ID
+        Size
+        Volume type (fast-ceph)
+        Backend driver to use (RBD, LVM, etc.)
+
+Step 2: Reads Volume Metadata from DB
+    cinder-volume queries the database to get:
+        Volume details (name, size, type)
+        Backend specs
+        Host assignment
+        Availability zone
+
+    SELECT * FROM volumes WHERE id='<uuid>';
+
+ -->This step confirms the volume belongs to this backend (host = ceph1@rbd#cinder-ceph).
+
+Step 3: Load Correct Driver
+    Based on volume_backend_name (from volume type), the right driver is loaded.
+
+#Examples:
+Backend	                                         Driver
+Ceph RBD	                           cinder.volume.drivers.rbd.RBDDriver
+LVM	                                   cinder.volume.drivers.lvm.LVMVolumeDriver
+NFS	                                   cinder.volume.drivers.nfs.NfsDriver
+
+  -->Each driver class implements standard volume operations:
+        create_volume()
+        delete_volume()
+        create_snapshot()
+        initialize_connection()
+
+Step 4: Driver Creates Volume on Backend
+Example 1: Ceph RBD Driver
+
+    Calls:
+RBDDriver.create_volume(volume)
+
+Internally uses:
+    rbd create volume-<uuid> --size 10240 --pool volumes
+    Result: A new image is created in Ceph as a block device.
+    
+Example 2: LVM Driver
+    Calls:
+    
+    lvcreate -L 10G -n volume-<uuid> cinder-volumes
+
+    Result: A logical volume is created on the local disk.
+
+Step 5: Update Volume Status in DB
+    After successful creation:
+    
+    UPDATE volumes SET status='available', host='ceph1@rbd' WHERE id=...;
+
+ -->The volume is now available to attach to VMs.
+
+
+##Other cinder-volume Responsibilities
+📸 Create Snapshot
+    Receives RPC create_snapshot(volume_id)
+    Driver creates snapshot:
+        Ceph: rbd snap create
+        LVM: lvcreate -s
+
+🧬 Clone Volume
+    Driver copies existing volume to a new one
+    Ceph: efficient rbd clone
+    LVM: dd or copy-on-write snapshot
+
+🔗 Attach/Detach Volume (with Nova)
+   When Nova boots or attaches a volume:
+    Nova calls Cinder's API to attach volume
+    
+    cinder-volume calls:
+    driver.initialize_connection(volume, connector)
+    
+    Returns connection info to Nova:
+        For Ceph: rbd://...
+        For LVM: iSCSI target details
+
+ -->Nova uses this info to connect the block device inside the VM
+
+
+
+##Why RabbitMQ in Cinder?#############
+OpenStack is a distributed microservices platform. Its components (like cinder-api, cinder-scheduler, cinder-volume, etc.) run as independent services, often across multiple hosts.
+
+RabbitMQ acts as the message broker to:
+    Allow these services to communicate asynchronously
+    Handle RPC calls and notifications
+    Provide decoupling and fault tolerance
+
+->It uses the Oslo Messaging library (OpenStack’s messaging abstraction layer).
+
+#Basic Concepts
+Concept	                                             Meaning
+Exchange	                                Routes messages based on rules
+Queue	                                        Holds messages until a consumer picks them up
+Topic	                                        A routing key pattern for queues
+Consumer	                                A service listening to a queue
+Publisher	                                A service sending messages (RPC or notification)
+
+#Step-by-Step: How RabbitMQ Handles Cinder Messaging
+
+->Scenario: User creates a volume
+
+openstack volume create --size 10 --type fast-ceph my-vol
+
+Step 1: cinder-api publishes a message to the cinder-scheduler
+
+    cinder-api calls:
+      
+      scheduler_rpcapi.create_volume(...)
+
+->This uses Oslo Messaging to send an RPC message to RabbitMQ.
+
+The message includes:
+    Volume ID
+    Size
+    Volume type
+    Project/user context
+
+->It goes to the cinder-scheduler topic:
+
+    topic = 'cinder-scheduler'
+    method = 'create_volume'
+
+Step 2: cinder-scheduler receives the message
+    cinder-scheduler is subscribed to the cinder-scheduler queue.
+
+    It dequeues the message and processes it:
+        Reads volume info from DB
+        Runs filters and weighers
+        Chooses backend host (e.g., ceph1@rbd)
+
+Step 3: cinder-scheduler publishes to cinder-volume topic
+
+    It then sends another RPC:
+       
+       volume_rpcapi.create_volume(...)
+
+    This is published to the topic:
+    
+    cinder-volume.ceph1
+
+    The message includes:
+        Volume ID
+        Host info
+        Backend name
+        Driver details
+
+Step 4: cinder-volume receives the message
+    The cinder-volume service on ceph1 is listening to:
+    queue = cinder-volume.ceph1
+
+ -->It gets the message, loads the correct driver (e.g., RBDDriver), and creates the volume on the Ceph backend.
+
+Step 5: Status Updates 
+   Once the volume is created, cinder-volume:
+        Updates the database: status = available
+        Optionally sends a notification message (event-based) via RabbitMQ:
+
+event: volume.create.end
+status: success
+
+
+-->Visual Layout (Copy for Notes)
+User CLI/API
+    ↓
+cinder-api
+    ↓  (RPC via RabbitMQ topic: cinder-scheduler)
+cinder-scheduler
+    ↓  (RPC via RabbitMQ topic: cinder-volume.ceph1)
+cinder-volume on ceph1
+    ↓
+Ceph / LVM / NFS backend
+
+
+####Step-by-Step: How This Upload Works Internally############
+1)User Authentication via Keystone
+    The CLI (openstack) reads your RC file for credentials.
+    
+    It first contacts the Keystone API:
+    
+    POST /v3/auth/tokens
+
+ -->Keystone returns a token and a service catalog, including Glance endpoints.
+
+2)Send HTTP POST to Glance API
+
+    The CLI sends a POST to glance-api with metadata:
+    POST /v2/images
+    X-Auth-Token: <keystone-token>
+    Content-Type: application/json
+    Body: {
+      "name": "ubuntu-22.04",
+      "disk_format": "qcow2",
+      "container_format": "bare",
+      "visibility": "public"
+    }
+
+ -->Glance responds with an image ID and status queued.
+
+3. Upload Image Data (HTTP PUT)
+    
+    The CLI sends the actual image binary using:
+    PUT /v2/images/<image-id>/file
+    Content-Type: application/octet-stream
+    Body: <binary content of ubuntu.qcow2>
+
+ -->The image is now uploaded into Glance's backend (e.g., file, Ceph, Swift).
+
+4. Glance Stores Image in Backend
+Depending on your configuration in /etc/glance/glance-api.conf:
+
+Backend	                                       Mechanism
+File	                                  Stored on local disk (e.g., /var/lib/glance/images)
+Swift	                                  Stored in Swift object store
+Ceph RBD	                          Stored in RBD pool (as rbd image)
+
+Example config:
+[glance_store]
+stores = file, rbd
+default_store = rbd
+rbd_store_pool = images
+rbd_store_user = glance
+
+If Ceph:
+rbd info images/glance-image-<uuid> --id glance
+
+5. DB Status Updated
+    Glance updates the image’s status in the Glance database from queued → saving → active.
+
+   SQL example:
+     UPDATE images SET status='active' WHERE id='<uuid>';
+
+✅ Final Output
+CLI displays:
+
++------------------+--------------------------------------+
+| Field            | Value                                |
++------------------+--------------------------------------+
+| id               | 2e21d6a1-d232-4f8a-b4e1-b1950ce623f6 |
+| name             | ubuntu-22.04                         |
+| status           | active                               |
+| disk_format      | qcow2                                |
+| container_format | bare                                 |
++------------------+--------------------------------------+
+
+-->You can now boot a VM with this image using Nova.
+
+#Glance Upload Architecture Diagram (Text Layout for Notes)
+User (CLI/Horizon)
+    ↓
+Keystone (Auth)
+    ↓
+Glance-API (POST /images)
+    ↓
+Image ID returned
+    ↓
+PUT image file to Glance
+    ↓
+Glance Store (File / Ceph / Swift)
+    ↓
+Glance DB (status = active)
+    ↓
+Image ready to boot
+
+
+##########glance image stored##############
+In OpenStack, Glance is the Image Service used to store and retrieve virtual machine images. Where Glance stores the actual image binary data depends on how it's configured — it supports multiple backends, including local file system, object storage, block storage, and external URLs.
+
+
+1)File Store (Local Filesystem)
+->How it works:
+    Image files are stored directly on the local disk of the Glance node.
+
+->Default location:
+
+/var/lib/glance/images/
+
+Each image is stored as a UUID-named raw or QCOW2 file.
+
+->Configuration (glance-api.conf):
+[glance_store]
+default_store = file
+stores = file
+filesystem_store_datadir = /var/lib/glance/images/
+
+->Example:
+ls /var/lib/glance/images/
+  2e21d6a1-d232-4f8a-b4e1-b1950ce623f6
+
+2)Swift Store (Object Storage)
+->How it works:
+    Glance uploads image data into Swift containers.
+    The image metadata stays in the Glance database.
+    The binary data is stored as Swift objects.
+
+->Configuration (glance-api.conf):
+[glance_store]
+default_store = swift
+stores = swift
+swift_store_container = glance
+swift_store_create_container_on_put = True
+swift_store_auth_version = 3
+swift_store_user = service:glance
+swift_store_key = <password>
+swift_store_auth_address = http://keystone:5000/v3
+
+->In Swift:
+swift list glance
+  2e21d6a1-d232-4f8a-b4e1-b1950ce623f6
+
+This object is the image binary.
+
+3)Ceph RBD Store (Highly Scalable)
+->How it works:
+    Glance uses Ceph's RADOS Block Device (RBD) as the backend.
+    Images are stored as RBD volumes in a Ceph pool.
+
+->Configuration (glance-api.conf):
+[glance_store]
+default_store = rbd
+stores = rbd
+rbd_store_user = glance
+rbd_store_pool = images
+rbd_store_ceph_conf = /etc/ceph/ceph.conf
+
+Note: Glance accesses Ceph via librbd (no local storage used).
+
+->Example in Ceph:
+rbd -p images ls
+  2e21d6a1-d232-4f8a-b4e1-b1950ce623f6
+
+Note: Image is accessible directly by Nova when using boot-from-image.
+
+4)HTTP Store (Read-Only)
+->How it works:
+    Glance does not store the image at all.
+    Instead, it stores a URL reference to an external location (e.g., Ubuntu mirror).
+    This is a read-only mode — Glance can’t upload images to this.
+
+->Upload Example:
+openstack image create \
+  --disk-format qcow2 \
+  --container-format bare \
+  --location http://cloud-images.ubuntu.com/... \
+  "ubuntu-remote"
+
+Note: Glance will just redirect Nova to pull the image from the URL.
+
+5)Where is image metadata stored?
+Regardless of backend, the image metadata (name, format, status, owner, visibility) is stored in the Glance database, typically MariaDB/MySQL.
+
+Image metadata table:
+
+SELECT * FROM images;
+
+->Includes:
+    ID (UUID)
+    Name
+    Status (queued, saving, active, etc.)
+    Disk format (qcow2, raw, etc.)
+    Backend location URI (e.g., rbd://, file://, swift://)
+
+
+#Diagram: Where Glance Stores Images
+          +-------------------+
+User CLI →|   Glance API      |→ Glance DB (metadata)
+          +--------+----------+
+                   |
+         +---------+------------+
+         |                      |
+     [1] File Store       [2] Swift Store
+     (local disk)         (object store)
+
+         |                      |
+     /var/lib/...        Swift container
+
+         |                      |
+         +-------- or ----------+
+                   |
+             [3] Ceph RBD Pool
+                 (block device)
+
+         +-------- or ----------+
+                   |
+              [4] HTTP/URL
+             (no local storage)
+
+
+
+
+#####Keystone###################
+#What is Keystone?
+Keystone is the identity service for OpenStack. It is responsible for:
+    Authentication (who you are)
+    Authorization (what you can do)
+    Service discovery
+    Token issuance and validation
+    Multi-tenancy (projects/domains)
+    Federation and external ID integration (LDAP, SAML, etc.)
+
+#Main Components of Keystone
+Component	                                      Description	                                             Example Task
+Identity	                                  Stores users, groups, domains	                                Check user credentials
+Token	                                          Issues tokens to authenticated users	                        Token for OpenStack CLI/API access
+Catalog	                                          Returns list of services + their endpoints	                Tell Nova where Glance is
+Policy	                                          Enforces RBAC rules	                                        Allow/deny API calls
+Role Assignment	                                  Links users → roles → projects	                        Admin of tenant "demo"
+Federation	                                  Support for external auth (LDAP, SAML)	                Authenticate via AD
+Trusts/Delegation	                          Allow service-to-service auth delegation	                Gnocchi access on behalf of user
+OAuth / Application Credentials                   API key style authentication	                                Scripts/apps access OpenStack
+
+1)dentity (Users, Groups, Domains)
+->What it does:
+    Maintains user accounts
+    Organizes users into groups
+    Segregates accounts into domains (like organizations)
+
+->DB Tables:
+    users, groups, domains
+
+->Flow:
+    User provides username + password
+    Keystone validates credentials from DB or LDAP
+
+2)Token
+->What it does:
+    After successful login, Keystone returns a token (like a session)
+    Token is passed in all future API calls
+
+->Types:
+    UUID (older)
+    Fernet (default, stateless & secure)
+
+->Flow:
+    User sends credentials to:
+
+       POST /v3/auth/tokens
+
+->Keystone returns:
+    X-Subject-Token: <token>
+    User + project + role context
+
+->That token is included in:
+
+    X-Auth-Token: <token>
+
+
+3)Catalog (Service Registry)
+->What it does:
+    Returns a list of OpenStack services + API endpoints per region
+    Enables service discovery
+
+->Flow:
+After login, user gets a catalog section:
+"catalog": [
+  {
+    "name": "nova",
+    "endpoints": [
+      {"interface": "public", "url": "http://nova-api:8774/v2.1"}
+    ]
+  }
+]
+
+->Why important?
+    The CLI and services (e.g., Nova → Glance) use the catalog to find each other.
+
+
+4)Policy
+->What it does:
+    Controls who can do what by enforcing RBAC policies
+    Each OpenStack service has a policy.yaml or policy.json file
+
+->Flow:
+    When a user calls an API (e.g., nova list), Nova checks:
+        "Does this token have role admin in this project?"
+        If yes → allow, else → reject (403)
+
+
+5)Role Assignment
+->What it does:
+    Maps users/groups to roles in projects or domains
+
+->Example:
+
+openstack role add --user demo --project demo admin
+
+->Meaning: User demo can act as admin inside project demo
+
+
+6)Federation / LDAP / External Identity
+->What it does:
+    Supports integrating with:
+        LDAP (e.g., Active Directory)
+        SAML2 / OIDC (SSO, enterprise identity providers)
+
+->Keystone acts as a proxy or broker
+
+->Flow:
+    User logs in via web interface
+    Keystone redirects to IDP (e.g., Okta, AD FS)
+    Once validated, Keystone issues a token
+
+
+7)Trusts & Delegation
+->What it does:
+    Allows user A to delegate rights to user B or a service
+
+->Example:
+    Gnocchi needs to read metrics for a user
+    User creates a trust, Gnocchi uses that token
+
+
+8)OAuth / Application Credentials
+->What it does:
+    Alternative to password auth
+    Ideal for scripts, automation, apps
+
+
+note: Token Validation Flow
+User sends request to Nova with token.
+Nova sends request to Keystone:
+
+   GET /v3/auth/tokens
+
+Keystone validates the token (Fernet keychain).
+If valid, returns user + project + role info.
+
+
+#####What is a Role in OpenStack?#########
+A role is a set of permissions assigned to a user (or group) within a project or domain. It defines what actions the user is allowed to perform.
+
+->Key Points:
+    Roles do not do anything by themselves.
+    Their meaning is defined by how each OpenStack service interprets them via policy files.
+    Common roles: admin, member, reader, support
+
+->Role Assignment:
+You assign a role like this:
+
+openstack role add --user demo --project demo member
+
+->That means:
+    The user demo is allowed to act as a member in the demo project.
+
+->Analogy:
+    Role = Job Title (e.g., Manager, Developer)
+    Permissions come from the job title, not from the employee name.
+
+
+#####What is a Domain in OpenStack?####
+A domain is a logical grouping of projects, users, and groups. It provides isolation, often used in multi-tenant environments.
+
+->Key Points:
+    A domain contains users and projects.
+    Each domain has its own namespace (you can have same user name in two domains).
+    
+ -->Used heavily in:
+        Service Providers hosting multiple customers
+        LDAP / external identity integration
+
+->Common Domains:
+    Default: The domain OpenStack uses by default
+    Customer1Domain, Customer2Domain: Custom multi-tenant environments
+
+#Example Scenario
+Let’s say you run a cloud for two organizations:
+
+Domain: CustomerA
+    ├── Project: Dev
+    ├── Project: QA
+    └── Users: alice, bob
+
+Domain: CustomerB
+    ├── Project: Web
+    ├── Project: DB
+    └── Users: charlie, dave
+
+
+#Diagram Layout (For Notes)
+
+                      +------------------------+
+                      |        Keystone        |
+                      +-----------+------------+
+                                  |
+               +-----------------+-----------------+
+               |                                   |
+         Domain: Default                      Domain: CustomerB
+               |                                   |
+     +---------+---------+               +--------+--------+
+     |       Users       |               |      Users      |
+     | alice, bob        |               | charlie, dave   |
+     |                   |               |                 |
+     +---------+---------+               +--------+--------+
+               |                                   |
+         Projects: Dev, QA                  Projects: Web, DB
+               |                                   |
+           Roles: admin, member, etc.       Roles: reader, member, etc.
+           
+#Where Role and Domain Meet
+You can assign roles at two levels:
+Level	                             Example
+Project-level	                 User gets admin role within a project
+Domain-level	                 User gets reader role across a domain   
+
+
+
+
+#######Swift in OpenStack###############
+#What is Swift in OpenStack?
+Swift is OpenStack's Object Storage service — similar in purpose to Amazon S3.
+
+->It allows you to:
+    Store and retrieve unstructured data (files, backups, media, etc.)
+    Access data via REST API
+    Store immutable objects in containers (like folders in buckets)
+
+Note: Swift is OpenStack's Object Storage service — similar in purpose to Amazon S3.
+
+->It allows you to:
+    Store and retrieve unstructured data (files, backups, media, etc.)
+    Access data via REST API
+    Store immutable objects in containers (like folders in buckets)
+ 
+ 
+#Difference Between Swift, Cinder, and Glance
+Service	          Type of Storage	              Use Case	                                                         Backend Usage
+Swift	          Object Storage	           Store files, logs, backups (S3-like)	                             REST API;containers/objects
+Cinder	          Block Storage	                   Persistent volumes for VMs (like a hard disk)	             iSCSI, LVM, Ceph RBD
+Glance	          Image Service         	   Stores VM images (can use Swift as backend)	                     Can use Swift, RBD, File
+
+So:
+    Glance stores images (optionally in Swift).
+    Cinder provides volumes to VMs.
+    Swift stores files/objects and allows public/private access.
+
+
+#Swift Architecture – Components Overview
+Swift is a distributed, eventually consistent object store.
+
+->Core Components
+Component	                                   Role
+Proxy Server	                              Entry point for all API requests
+Account Server	                              Tracks accounts and associated containers
+Container Server	                      Tracks container metadata and associated objects
+Object Server	                              Stores actual object data on disk
+Ring Files	                              Mapping of data to devices across the cluster
+Replicator / Auditor	                      Ensure data integrity and consistency
+
+
+#Component Interaction (Flow)
+->Example: Uploading a file to Swift
+    Client/CLI/API sends:
+    PUT /v1/AUTH_demo/container1/file.txt
+    
+    Request hits the Proxy Server:
+        Authenticates with Keystone
+        Looks up the ring to decide where to send the file
+        Breaks request into container and object
+
+    Container Server:
+        Updates container metadata (e.g., size, object list)
+
+    Object Server:
+        Stores actual file data (with replication)
+        Stores metadata (etag, size, timestamp)
+
+Note:Swift replicators ensure multiple copies exist across nodes.
+
+
+#Swift and Keystone
+
+->Swift Authentication via Keystone:
+Swift doesn’t manage users — it delegates authentication to Keystone.
+    Swift supports keystoneauth middleware.
+    All API requests are passed through auth_token middleware.
+    
+    Keystone issues tokens like:
+
+       openstack token issue
+
+->Config example in /etc/swift/proxy-server.conf:
+[pipeline:main]
+pipeline = catch_errors gatekeeper healthcheck proxy-logging cache authtoken keystoneauth proxy-server
+
+[filter:authtoken]
+auth_url = http://keystone:5000
+auth_type = password
+project_domain_id = default
+...
+
+[filter:keystoneauth]
+use = egg:swift#keystoneauth
+
+
+#Swift Ring
+->What is the Ring?
+    A ring is a data structure that maps:
+        
+        Object → Container → Storage Node
+
+    Each server (object/container/account) has its own ring
+    Swift uses consistent hashing
+
+->Example:
+    3 replicas
+    An object may go to 3 different disks/nodes, based on ring config
+
+->To generate ring files:
+swift-ring-builder object.builder ...
+swift-ring-builder object.builder rebalance
+
+->Ring files live at:
+/etc/swift/*.ring.gz
+
+
+#Swift Architecture Diagram (Layout for Notes)
++------------+           +-------------------+        +-----------------+
+|   Client   |  <---->   |  Swift Proxy Node | <----> |  Keystone Auth  |
++------------+           +-------------------+        +-----------------+
+                                |
+                +---------------+----------------+
+                |               |                |
+     +----------+-----+ +-------+--------+ +------+--------+
+     | Account Server | | Container Srv  | | Object Server |
+     +----------------+ +----------------+ +---------------+
+                                 |
+                           +-------------+
+                           | Storage Disks|
+                           +-------------+
+
+[All data routed via ring-mapping and replicated across nodes]
+
+
+###What happens when you upload an object in Swift##########
+What is “an object” in Swift?
+In Swift, an object is:
+    Any file (e.g., backup.tar.gz, image.jpg, etc.)
+    Stored as immutable binary data
+    Uploaded to a container (like a folder)
+    Identified by account/container/object
+
+
+#Goal: Upload backup1.tar.gz to container my-backups in project demo
+->Step-by-Step Object Upload Workflow
+1)User or CLI Sends a PUT Request
+
+->Using OpenStack CLI:
+
+openstack object create my-backups backup1.tar.gz
+
+->Which makes a REST API call:
+PUT /v1/AUTH_demo/my-backups/backup1.tar.gz
+X-Auth-Token: <Keystone token>
+
+2)Request Hits the Swift Proxy Server
+    Acts as the entry point for all Swift requests.
+    Authenticates with Keystone using the X-Auth-Token.
+    Validates permissions for this project and user.
+
+->Proxy middleware pipeline in /etc/swift/proxy-server.conf:
+[pipeline:main]
+pipeline = catch_errors healthcheck authtoken keystoneauth proxy-logging proxy-server
+
+3)Proxy Server Parses the Request
+    Parses:
+    v1/AUTH_demo/my-backups/backup1.tar.gz
+        Account = AUTH_demo
+        Container = my-backups
+        Object = backup1.tar.gz
+
+4)Proxy Consults the Ring
+Swift uses ring files to map logical data (account/container/object) to physical storage nodes and devices.
+
+->It consults:
+    account.ring.gz → Which node handles this account?
+    container.ring.gz → Which node handles this container?
+    object.ring.gz → Where to store the object (primary + replicas)?
+
+->Ring maps the object to:
+/srv/node/sdb on object1
+/srv/node/sdc on object2
+/srv/node/sdd on object3
+
+->By default: 3 replicas → 3 different nodes/disks
+
+5)Proxy Streams the Object to Object Servers
+The object data is streamed from the client → proxy → 3 different object servers.
+
+->The object server:
+    Stores the object as a file under a hashed path
+    Stores extended attributes: metadata, timestamp, checksum
+
+->Example:
+/srv/node/sdb/objects/135/ab1/backup1.tar.gz.data
+
+->The file contains:
+    Raw binary
+    Metadata file (JSON format)
+
+6)Metadata Update to Container Server
+After object is stored:
+    The container server is contacted
+    
+ -->Updates container metadata:
+        Object name
+        Size
+        Timestamp
+        Content-type
+
+->Stored in container DB:
+container_info.db
+ └── object: backup1.tar.gz
+ └── size: 15360000 bytes
+ └── timestamp: 1690932232.10392
+
+7)Response Returned to Client
+Once all primary object nodes acknowledge the write, the proxy server returns:
+
+    201 Created
+
+note: The object is now available for download.
+
+8)Background Replication Ensures Redundancy
+Even though 3 copies are written immediately, Swift continuously ensures:
+    Replicas exist on correct nodes
+    Data integrity via object hashing
+
+->Components:
+    object-replicator: Ensures 3 copies exist (resyncs if one fails)
+    object-auditor: Verifies checksum/hash
+    object-updater: Updates async container info if proxy skipped it
+
+
+##Summary Table of Component Involvement
+Component	                                   Role in Upload
+Proxy Server	                               Handles request, token auth, ring lookup
+Object Server	                               Stores the file data
+Container Server	                       Updates container metadata
+Account Server	                               Tracks which containers exist for account
+Keystone	                               Authenticates the token
+Ring	                                       Maps object to physical storage
+Replicator	                               Maintains 3+ copies of object
+Auditor/Updater	                               Ensures integrity and consistency
+
+
+#Diagram (Text-based for Notes)
+User → Proxy Server → Keystone (auth)
+          |
+        Ring Lookup
+          |
+   +------+------+------+
+   |             |             |
+Object1    Object2     Object3
+  |             |             |
+Write .data    Write .data   Write .data
+Update → Container Server (metadata)
+Background → Replicator verifies replicas
+
+
+
+##########magnum#################
+#What is Magnum?
+Magnum is the Container Orchestration Engine (COE) management service in OpenStack.
+It allows users to provision and manage Kubernetes, Docker Swarm, or Mesos clusters using OpenStack resources like Nova (compute), Cinder (volume), Neutron (network), and Heat (orchestration).
+    
+  Note: Think of Magnum as “Kubernetes-as-a-Service” on top of OpenStack.
+
+#Magnum Architecture – Key Components
+Component	                                          Description
+Magnum API	                                     Exposes RESTful endpoints to users
+Magnum Conductor	                             Main logic engine that handles provisioning, scaling, upgrading
+COE Templates	                                     Heat templates and configurations used to deploy K8s/Swarm clusters
+Baymodel / ClusterTemplate	                     Describes how to create clusters (image, flavor, network, etc.)
+Bay / Cluster	                                     The actual deployed container orchestration cluster
+Heat	                                             Orchestration engine to deploy VMs and configure them
+Kubernetes	                                     The COE being provisioned
+Keystone	                                     Authentication and policy enforcement
+Nova / Neutron / Cinder / Glance	             Infrastructure services that Magnum uses
+
+#Magnum Workflow: Cluster Creation
+Let’s walk through how Magnum creates a Kubernetes cluster step-by-step.
+
+Step 1: User Requests a Cluster
+openstack coe cluster create \
+  --cluster-template k8s-template \
+  --master-count 1 \
+  --node-count 3 \
+  my-k8s-cluster
+
+note:
+    The user authenticates via Keystone.
+    Magnum API receives the request.
+
+
+Step 2: Magnum API → Magnum Conductor
+    Magnum API forwards the request to Magnum Conductor via RPC.
+    The conductor verifies the user’s project and permissions (via Keystone).
+
+Step 3: Conductor Uses Heat to Deploy Cluster
+Magnum uses Heat templates to build the requested cluster.
+    It sends a request to Heat to create a stack.
+
+  ->Heat launches:
+        One or more master nodes
+        One or more worker nodes
+        Optionally load balancers, etc.
+
+->This stack uses:
+    Nova to launch VMs
+    Neutron to configure network ports and floating IPs
+    Cinder (optional) to attach volumes
+    Glance for the OS image
+
+Step 4: Certificates and Trusts
+    Magnum generates TLS certificates for the cluster
+    It uses Barbican to store these securely
+    Magnum also creates trusts in Keystone (optional) for user delegation
+
+Step 5: Nodes Install Kubernetes (or Swarm)
+->On boot:
+    Master and worker nodes run cloud-init scripts or install tools via Ansible/bash.
+
+ -> These install:
+        kube-apiserver, kubelet, kube-proxy, etc. (for Kubernetes)
+        
+ ->Networking is configured (Flannel, Calico, etc.)
+
+Step 6: Cluster Ready!
+Magnum reports the cluster is active:
++---------------------+--------------------------------------+
+| uuid                | 7a7d...                              |
+| name                | my-k8s-cluster                       |
+| status              | CREATE_COMPLETE                      |
++---------------------+--------------------------------------+
+
+->You can now use:
+openstack coe cluster config my-k8s-cluster
+export KUBECONFIG=/path/to/config
+kubectl get nodes
+
+
+##Goal: Create a Kubernetes Cluster using Magnum
+
+openstack coe cluster create --cluster-template k8s-template --master-count 1 --node-count 2 my-k8s-cluster
+
+#Step-by-Step Detailed Workflow
+1)User Authentication via Keystone
+    CLI or Horizon sends user credentials.
+    Gets a token from Keystone.
+    Token is passed to Magnum API.
+
+        openstack token issue
+
+2)Magnum API Receives Request
+    Magnum authenticates the token with Keystone.
+    Checks the user’s roles and project.
+    Retrieves Cluster Template (k8s-template) from DB.
+
+->Cluster Template contains:
+    Nova flavor
+    Glance image ID
+    Neutron network
+    COE (Kubernetes)
+    Labels (e.g., volume_driver=ceph)
+
+3)Magnum Conductor Processes Request
+    Converts the cluster creation request into a Heat stack definition.
+    
+  ->Generates:
+        Master and worker nodes
+        Load balancer (if enabled)
+        Security groups
+
+    Sets up TLS certificates for secure K8s communication.
+
+4)TLS Certificate Generation (Barbican)
+    Magnum generates TLS keys/certs:
+        API server cert
+        CA cert
+        Kubelet certs
+
+    Uses Barbican to store the secrets securely.
+    These are later injected into the cluster VMs via cloud-init or Heat userdata.
+
+5)Heat Stack Is Launched
+    Magnum sends the Heat stack template to Heat.
+    
+  ->Heat becomes the orchestration engine and deploys:
+    Component	                       Created By Heat
+    Master/Worker VMs	                  via Nova
+    Networks/Subnets	                  via Neutron
+    Ports/IPs	                          via Neutron
+    Volumes	                          via Cinder
+    Floating IPs	                  via Neutron
+
+6)Nova Provisions Virtual Machines
+    Heat calls Nova to create instances:
+        Uses image from Glance
+        Applies flavor from ClusterTemplate
+        Injects cloud-init script to configure Kubernetes on boot
+
+->resources:
+  master_node:
+    type: OS::Nova::Server
+    properties:
+      image: fedora-coreos
+      flavor: m1.medium
+      user_data: |
+        #cloud-config
+        runcmd:
+          - start kube-apiserver
+
+7)Neutron Sets Up Networking
+    Neutron creates:
+        Networks
+        Subnets
+        Security groups
+        Floating IPs (optional)
+        Internal routing between nodes
+
+    Neutron may also be used by the Kubernetes cluster (via CNI) to assign pod and service networks.
+
+8)Cinder (Optional): Volume Creation
+    If volume_driver=ceph or docker_volume_size is defined:
+        Cinder creates volumes
+        Attaches volumes to Kubernetes nodes
+        May be used for persistent storage or etcd
+
+9)Glance Image Is Used
+    The VMs use a pre-baked image from Glance, e.g.:
+        Fedora CoreOS
+        Ubuntu with kubeadm
+
+    This image includes required packages and bootstrap scripts.
+
+10)Cluster Bootstrap (cloud-init/kubeadm)
+Inside the VMs:
+    cloud-init runs scripts:
+        On master: starts kube-apiserver, etcd, etc.
+        On workers: runs kubelet, joins cluster
+
+    Certificates from Barbican are injected
+
+11)Octavia (Optional): Load Balancer for API
+    If enabled, Magnum requests Octavia to:
+        Create a load balancer on the external network
+        Add all master nodes as backend members
+
+    Returns the API endpoint of the Kubernetes cluster
+
+12)Magnum Marks Cluster as Active
+    When the Heat stack is done, Magnum marks the cluster as CREATE_COMPLETE.
+
+->You can then retrieve kubeconfig:
+    openstack coe cluster config my-k8s-cluster
+    kubectl get nodes
+
+
+#Magnum Cluster Creation Architecture Diagram (Text Layout)
+             +------------------+
+User CLI --> |  Magnum API      | <-- Keystone (auth)
+             +--------+---------+
+                      |
+                      v
+             +------------------+
+             |  Magnum Conductor|
+             +--------+---------+
+                      |
+            Generates Heat Template
+                      |
+                      v
+               +--------------+
+               |     Heat     |
+               +--+-------+---+
+                  |       |
+       +----------+       +------------+
+       | Nova: VM creation             |
+       | Glance: Base image            |
+       | Neutron: Network setup        |
+       | Cinder: Volume attachment     |
+       | Barbican: TLS certs injected  |
+       | Octavia: Load Balancer (API)  |
+       +-------------------------------+
+
+Cluster is provisioned → kubeconfig returned → Ready to use!
+
+

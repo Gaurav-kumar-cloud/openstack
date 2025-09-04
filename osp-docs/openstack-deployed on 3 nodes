@@ -1,0 +1,131 @@
+############when we deploy openstack and ceph on same 3 nodes###########
+vi /etc/kolla/neutron-server/neutron.conf
+   [experimental]
+    linuxbridge = true
+        
+#####flavor creating#####
+openstack flavor create --id 1 --ram 512 --disk 1 --vcpus 1 m1.tiny
+openstack flavor create --id 2 --ram 2048 --disk 20 --vcpus 1 m1.small
+openstack flavor create --id 3 --ram 4096 --disk 40 --vcpus 2 m1.medium
+openstack flavor create --id 4 --ram 8192 --disk 80 --vcpus 4 m1.large
+openstack flavor create --id 5 --ram 16384 --disk 160 --vcpus 8 m1.xlarge
+
+########image upload#########
+https://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img
+https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+https://cloud.centos.org/centos/9-stream/x86_64/images/CentOS-Stream-GenericCloud-9-latest.x86_64.qcow2
+https://dl.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9-latest-x86_64-dvd.iso
+
+
+##########Qemu image convertor############
+qemu-img convert -f qcow2 -O raw <cirros.raw> <cirros_fixed.raw>              (<existing_image>) & (<image_save_byname>)
+qemu-img info <image-file>                         (for cheeck convert successfully or not)
+
+##########to upload images on openstack##########
+openstack image create "ubuntu"   --file noble-server-cloudimg-amd64.img   --disk-format qcow2   --container-format bare   --public
+
+
+####Now for importing key in openstack######
+ssh-keygen -y -f navo-key.pem > navo-key.pub
+
+--then copy the .pub key and paste them or upload to import section of key.
+
+--for ssh use .pem file that you have convert to .pem file.
+like:
+   ssh -i navo-key.pem ubuntu@<192.168.122.160>
+
+#######completely destroy openstack#############
+docker rm -f nova_libvirt                      (on all nodes)
+kolla-ansible -i multinode destroy --yes-i-really-really-mean-it
+rm -rf /etc/kolla  /var/lib/kolla /var/lib/nova /var/lib/cinder
+docker ps -a --format '{{.ID}} {{.Image}}' | grep -v 'quay.io/ceph/' | awk '{print $1}' | xargs -r docker rm -f     (remove all container except ceph)-optional
+sudo docker system prune -a --volumes -f
+sudo rm -rf /var/lib/docker
+sudo rm -rf /etc/kolla
+rm -rf kolla-ansible  # if cloned from git
+sudo lvremove -f cinder-volumes
+sudo vgremove cinder-volumes
+sudo pvremove /dev/sdb
+rm -f multinode
+rm -f /etc/kolla/passwords.yml
+rm -f /etc/kolla/globals.yml
+sudo apt purge -y docker.io python3-venv python3-dev libffi-dev gcc libssl-dev ansible git
+sudo apt autoremove -y
+sudo rm -rf /opt/osp
+docker images --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep "2023.2-ubuntu-jammy" | awk '{print $2}' | xargs -r docker rmi              (to remove all images)
+##########completely destroy ceph##########
+cephadm rm-cluster --force --zap-osds
+rm -rf /var/lib/ceph /etc/ceph
+ovs-vsctl del-br br-ex
+ovs-vsctl del-br br-int
+netplan apply
+apt remove --purge docker-ce podman python3-openstackclient -y
+sudo systemctl stop ceph.target || true
+sudo apt purge -y ceph ceph-common cephadm ceph-mgr ceph-mon ceph-osd ceph-base ceph-fuse librados2 librbd1 radosgw
+sudo rm -f /etc/apt/sources.list.d/ceph.list
+sudo rm -f /usr/share/keyrings/ceph-release.gpg
+apt autoremove -y
+
+
+#######fix the administrator error################
+docker exec -it horizon bash
+cd /var/log/kolla/horizon
+
+docker exec -it horizon bash
+source /var/lib/kolla/venv/bin/activate
+python manage.py compress --force
+or
+django-admin compress --settings=openstack_dashboard.settings
+
+
+#######If this still fails:################
+Edit local_settings.py (usually found at /etc/kolla/horizon/local_settings or /etc/openstack-dashboard/local_settings depending on your setup):
+COMPRESS_OFFLINE = False
+exit
+docker restart horizon
+
+
+#########Ceph Object Gateway Integration with Keystone (Swift Authentication)##########
+######## Set the Keystone API version##########
+sudo ceph config set global rgw_keystone_api_version 3
+
+######### Define the accepted roles for Keystone users####
+sudo ceph config set global rgw_keystone_accepted_roles "_member_, member, admin, ResellerAdmin"
+
+######### Set the Keystone admin user's password#########
+sudo ceph config set global rgw_keystone_admin_password WpBL5aC3uet5qk3q13OdedHkvkDy4LeZfyronLHO
+
+########## Define the domain used by the admin user######
+sudo ceph config set global rgw_keystone_admin_domain Default
+
+########### Set the Keystone project used by the admin user##########
+sudo ceph config set global rgw_keystone_admin_project service
+
+########### Define the admin user that the Ceph RGW will use to authenticate#########
+sudo ceph config set global rgw_keystone_admin_user ceph_rgw
+
+############ Provide the Keystone endpoint URL###########
+sudo ceph config set global rgw_keystone_url http://10.10.52.121:5000
+
+############ Disable SSL verification (not recommended for production)#########
+sudo ceph config set global rgw_keystone_verify_ssl false
+
+############ Enable Keystone authentication for S3 API#########
+sudo ceph config set global rgw_s3_auth_use_keystone true
+
+############ Disable the use of account name in Swift URL path########
+sudo ceph config set global rgw_swift_account_in_url false
+
+###########Restart RGW Services############
+ceph orch restart rgw.radosGW
+
+##########iopenstack inerview questions#############
+https://mindmajix.com/openstack-interview-questions-answers
+
+##########kubernetes links############
+https://openmetal.io/resources/blog/levan-how-to-create-a-kubernetes-template-in-openstack/
+https://openmetal.io/docs/manuals/tutorials/lb-with-octavia
+
+
+#########openstack mariadb database backup###########
+docker exec mariadb mysqldump -uroot -p'DVSnghfkZTEaxWe8b0gfgRiV0KVmlYydqjCVk36w' --all-databases > /root/Bheemaiah-cloud-mariadb-backup-$(date +%Y%m%d-%H%M%S).sql

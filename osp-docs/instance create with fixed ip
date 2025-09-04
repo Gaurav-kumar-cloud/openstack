@@ -1,0 +1,8 @@
+openstack server create \
+  --flavor m2.medium \
+  --image ubuntu \
+  --nic net-id=9f7a0f92-98d8-4587-b775-825d3ac7177f,v4-fixed-ip=192.168.1.204 \
+  --security-group allow-all \
+  --block-device source=volume,id=<VOLUME_ID>,dest=volume,bootindex=0 \
+  matrimony
+
